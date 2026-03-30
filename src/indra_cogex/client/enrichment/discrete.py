@@ -6,10 +6,11 @@ from typing import Collection, Iterable, List, Mapping, Optional, Set, Tuple, Un
 import logging
 import numpy as np
 import pandas as pd
-from scipy.stats import fisher_exact
+from scipy.stats import fisher_exact, combine_pvalues
 from statsmodels.stats.multitest import multipletests
+from indra.databases import hgnc_client
+from indra.databases.hgnc_client import is_kinase, is_transcription_factor, is_phosphatase
 
-from indra_cogex.apps.search.search import get_kinase_phosphosite_statements
 from indra_cogex.client.enrichment.utils import (
     get_entity_to_regulators,
     get_entity_to_targets,
@@ -22,6 +23,7 @@ from indra_cogex.client.enrichment.utils import (
 from indra_cogex.client.neo4j_client import Neo4jClient, autoclient
 from indra_cogex.client.queries import get_genes_for_go_term
 
+
 logger = logging.getLogger(__name__)
 
 __all__ = [
@@ -31,8 +33,10 @@ __all__ = [
     "phenotype_ora",
     "indra_downstream_ora",
     "indra_upstream_ora",
+    "indra_intermediate_ora",
     "kinase_ora",
     "EXAMPLE_GENE_IDS",
+    "GENE_TYPES",
 ]
 
 # fmt: off
@@ -49,6 +53,44 @@ EXAMPLE_GENE_IDS = [
 
 # fmt: on
 
+# gene types that can be used for filtering in indra_intermediate_ora
+GENE_TYPES = {
+    'kinase': is_kinase,
+    'tf': is_transcription_factor,
+    'phosphatase': is_phosphatase,
+}
+
+def parse_gene_list(gene_list: List[str]) -> Tuple[dict[str, str], List[str]]:
+    """Parse a list of gene symbols or HGNC identifiers into HGNC IDs.
+
+    Parameters
+    ----------
+    gene_list :
+        List of gene symbols or HGNC identifiers.
+
+    Returns
+    -------
+    :
+        A tuple of a dict mapping HGNC IDs to gene symbols and a list
+        of identifiers that could not be parsed.
+    """
+    hgnc_ids = []
+    errors = []
+    for entry in gene_list:
+        if entry.lower().startswith("hgnc:"):
+            hgnc_ids.append(entry.lower().replace("hgnc:", "", 1))
+        elif entry.isnumeric():
+            hgnc_ids.append(entry)
+        else:
+            hgnc_id = hgnc_client.get_current_hgnc_id(entry)
+            if isinstance(hgnc_id, list):
+                hgnc_ids.append(hgnc_id[0])
+            elif hgnc_id:
+                hgnc_ids.append(hgnc_id)
+            else:
+                errors.append(entry)
+    genes = {hgnc_id: hgnc_client.get_hgnc_name(hgnc_id) for hgnc_id in hgnc_ids}
+    return genes, errors
 
 def _prepare_hypergeometric_test(
     query_set: Set[str],
@@ -448,6 +490,159 @@ def indra_upstream_ora(
         **kwargs,
     )
 
+def indra_intermediate_ora(
+    client: Neo4jClient,
+    upstream_gene_ids: Iterable[str],
+    downstream_gene_ids: Iterable[str],
+    background_gene_ids: Optional[Collection[str]] = None,
+    *,
+    minimum_evidence_count: Optional[int] = 1,
+    minimum_belief: Optional[float] = 0.0,
+    method: Optional[str] = 'fdr_bh',
+    alpha: Optional[float] = 0.05,
+    keep_insignificant: bool = False,
+    relationship_types: Optional[List[str]] = None,
+) -> pd.DataFrame:
+    """Identify statistically enriched intermediate regulators connecting
+    an upstream gene set to a downstream gene set.
+
+    Runs ORA in both directions and intersects the results, combining
+    p-values using Fisher's method. Multiple testing correction is
+    applied once on the combined p-values.
+
+    Parameters
+    ----------
+    client :
+        Neo4jClient
+    upstream_gene_ids :
+        List of HGNC gene symbols or identifiers for the upstream gene
+        set
+    downstream_gene_ids :
+        List of HGNC gene symbols or identifiers for the downstream
+        affected genes
+    background_gene_ids :
+        List of HGNC gene identifiers for the background gene set - If
+        not given, all genes with HGNC IDs are used as the background
+    minimum_evidence_count :
+        Minimum number of evidences to consider a causal relationship
+    minimum_belief :
+        Minimum belief to consider a causal relationship
+    method :
+        Multiple testing correction method, by default 'fdr_bh'
+    alpha :
+        Significance threshold for filtering, by default 0.05
+    keep_insignificant :
+        Whether to retain intermediates that do not pass the significance
+        threshold after multiple testing correction, by default False
+    relationship_types :
+        Optional list of relationship types to filter by - 
+        If None, all relationship types are included and the SQLite cache is used
+
+    Returns
+    -------
+    :
+        DataFrame with columns:
+        curie, name, p_down, mlp_down, p_up, mlp_up,
+        p_combined, q_combined, mlp_combined, mlq_combined
+    """
+
+    upstream_gene_ids, upstream_errors = parse_gene_list(list(upstream_gene_ids))
+    if upstream_errors:
+        logger.warning(f"Failed to parse {len(upstream_errors)} upstream gene identifiers")
+    upstream_gene_ids = list(upstream_gene_ids.keys())
+
+    downstream_gene_ids, downstream_errors = parse_gene_list(list(downstream_gene_ids))
+    if downstream_errors:
+        logger.warning(f"Failed to parse {len(downstream_errors)} downstream gene identifiers")
+    downstream_gene_ids = list(downstream_gene_ids.keys())
+
+    count = (
+        count_human_genes(client=client)
+        if not background_gene_ids
+        else len(background_gene_ids)
+    )
+    bg_genes = frozenset(background_gene_ids) if background_gene_ids else None
+
+    down_analysis = _do_ora(
+        get_entity_to_regulators(
+            client=client,
+            minimum_evidence_count=minimum_evidence_count,
+            minimum_belief=minimum_belief,
+            background_gene_ids=bg_genes,
+            relationship_types=relationship_types,
+        ),
+        query=upstream_gene_ids,
+        count=count,
+        method=None,
+        keep_insignificant=True,
+    )
+
+    up_analysis = _do_ora(
+        get_entity_to_targets(
+            client=client,
+            minimum_evidence_count=minimum_evidence_count,
+            minimum_belief=minimum_belief,
+            background_gene_ids=bg_genes,
+            relationship_types=relationship_types,
+        ),
+        query=downstream_gene_ids,
+        count=count,
+        method=None,
+        keep_insignificant=True,
+    )
+
+    down_analysis = down_analysis[down_analysis["curie"].str.startswith("hgnc:")]
+    up_analysis = up_analysis[up_analysis["curie"].str.startswith("hgnc:")]
+
+    merged = down_analysis[["curie", "name", "p", "mlp"]].merge(
+        up_analysis[["curie", "name", "p", "mlp"]],
+        on=["curie", "name"],
+        suffixes=("_down", "_up"),
+    )
+
+    if merged.empty:
+        logger.warning(
+            "No intermediates found in the intersection of downstream "
+            "and upstream ORA results."
+        )
+        return pd.DataFrame(
+            columns=[
+                "curie", "name",
+                "p_down", "mlp_down",
+                "p_up", "mlp_up",
+                "p_combined", "q_combined",
+                "mlp_combined", "mlq_combined",
+            ]
+        )
+
+    merged["p_combined"] = merged.apply(
+        lambda row: combine_pvalues(
+            [row["p_down"], row["p_up"]],
+            method="fisher",
+        )[1],
+        axis=1,
+    )
+
+    merged = merged.sort_values("p_combined", ascending=True)
+    if method:
+        correction_results = multipletests(
+            merged["p_combined"],
+            method=method,
+            alpha=alpha,
+            is_sorted=True,
+        )
+        merged["q_combined"] = correction_results[1]
+        merged["mlq_combined"] = -np.log10(merged["q_combined"])
+
+    merged["mlp_combined"] = -np.log10(merged["p_combined"])
+
+    if not keep_insignificant:
+        merged = merged[merged["q_combined"] < alpha]
+
+    return merged.sort_values(
+        "q_combined", ascending=True
+    ).reset_index(drop=True)
+
 
 @autoclient(cache=True)
 def count_phosphosites(*, client: Neo4jClient) -> int:
@@ -534,6 +729,9 @@ def kinase_ora(
         DataFrame with columns:
         curie (kinase ID), name (kinase name), p (p-value), q (adjusted p-value), mlp (-log10 p), mlq (-log10 q).
     """
+
+    from indra_cogex.apps.search.search import get_kinase_phosphosite_statements
+
     phosphosite_ids = list(phosphosite_ids)  # Convert to list for multiple use
 
     count = (
