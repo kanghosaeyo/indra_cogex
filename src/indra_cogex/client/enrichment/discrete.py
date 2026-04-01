@@ -501,7 +501,8 @@ def indra_intermediate_ora(
     method: Optional[str] = 'fdr_bh',
     alpha: Optional[float] = 0.05,
     keep_insignificant: bool = False,
-    #relationship_types: Optional[List[str]] = None,
+    upstream_relationship_types: Optional[List[str]] = None,
+    downstream_relationship_types: Optional[List[str]] = None,
 ) -> pd.DataFrame:
     """Identify statistically enriched intermediate regulators connecting
     an upstream gene set to a downstream gene set.
@@ -534,9 +535,14 @@ def indra_intermediate_ora(
     keep_insignificant :
         Whether to retain intermediates that do not pass the significance
         threshold after multiple testing correction, by default False
-    relationship_types :
-        Optional list of relationship types to filter by - 
-        If None, all relationship types are included and the SQLite cache is used
+    upstream_relationship_types :
+        Optional list of relationship types to filter by when finding
+        entities downstream of the upstream gene set. If None, all relationship
+        types are included and the SQLite cache is used.
+    downstream_relationship_types :
+        Optional list of relationship types to filter by when finding
+        entities upstream of the downstream gene set. If None, all relationship types
+        are included and the SQLite cache is used.
 
     Returns
     -------
@@ -569,7 +575,7 @@ def indra_intermediate_ora(
             minimum_evidence_count=minimum_evidence_count,
             minimum_belief=minimum_belief,
             background_gene_ids=bg_genes,
-            #relationship_types=relationship_types,
+            relationship_types=upstream_relationship_types,
         ),
         query=upstream_gene_ids,
         count=count,
@@ -583,7 +589,7 @@ def indra_intermediate_ora(
             minimum_evidence_count=minimum_evidence_count,
             minimum_belief=minimum_belief,
             background_gene_ids=bg_genes,
-            #relationship_types=relationship_types,
+            relationship_types=downstream_relationship_types,
         ),
         query=downstream_gene_ids,
         count=count,

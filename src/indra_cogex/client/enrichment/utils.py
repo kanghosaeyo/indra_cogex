@@ -138,6 +138,7 @@ def collect_genes_with_confidence(
     query: str,
     *,
     background_gene_ids: Optional[Iterable[str]] = None,
+    rel_types: Optional[List[str]] = None,
     client: Neo4jClient,
 ) -> Dict[Tuple[str, str], Dict[str, Tuple[float, int]]]:
     """Collect gene sets based on the given query.
@@ -149,6 +150,9 @@ def collect_genes_with_confidence(
     background_gene_ids :
         List of HGNC gene identifiers for the background gene set. If not
         given, all genes with HGNC IDs are used as the background.
+    rel_types :
+        Optional list of relationship types to filter by. If specified,
+        passed as a query parameter to the Neo4j client.
     client :
         The Neo4j client.
 
@@ -163,7 +167,7 @@ def collect_genes_with_confidence(
     curie_to_hgnc_ids = defaultdict(dict)
     max_beliefs: Dict[Tuple[str, str, str], float] = {}
     max_ev_counts: Dict[Tuple[str, str, str], int] = {}
-    query_res = client.query_tx(query)
+    query_res = client.query_tx(query, rel_types=rel_types)
     if query_res is None:
         raise RuntimeError("Query returned no results")
     for result in query_res:
@@ -860,6 +864,7 @@ def get_entity_to_targets(
     background_gene_ids: Optional[Iterable[str]] = None,
     minimum_evidence_count: Optional[int] = 1,
     minimum_belief: Optional[float] = 0.0,
+    relationship_types: Optional[List[str]] = None,
 ) -> Dict[Tuple[str, str], Set[str]]:
     """Get a mapping from each entity in the INDRA database to the set of
     human genes that it regulates.
@@ -877,6 +882,11 @@ def get_entity_to_targets(
     minimum_belief :
         The minimum belief for a relationship to count it as a regulator.
         Defaults to 0.0 (i.e., cutoff not applied).
+    relationship_types :
+        Optional list of relationship types to filter by.
+        If None, all relationship types are included and the SQLite
+        cache is used. If specified, the cache is bypassed and the
+        query is run directly against Neo4j.
 
     Returns
     -------
@@ -887,6 +897,7 @@ def get_entity_to_targets(
     genes_with_confidence = get_entity_to_targets_raw(
         client=client,
         background_gene_ids=background_gene_ids,
+        relationship_types=relationship_types,
     )
     return filter_gene_set_confidences(
         genes_with_confidence,
@@ -900,6 +911,7 @@ def get_entity_to_targets_raw(
     background_gene_ids: Optional[Iterable[str]] = None,
     use_sqlite_cache: bool = True,
     limit: Optional[int] = None,
+    relationship_types: Optional[List[str]] = None,
     sqlite_db_path: Union[Path, str] = SQLITE_CACHE_PATH,
 ) -> Dict[Tuple[str, str], Dict[str, Tuple[float, int]]]:
     """Get all regulator to target relationships
@@ -918,6 +930,9 @@ def get_entity_to_targets_raw(
         APP_CACHE_MODULE found in `indra_cogex.apps.constants`.
     limit :
         If given, limit the number of entities returned to this number.
+    relationship_types :
+        Optional list of relationship types to filter by.
+        If specified, bypasses the SQLite cache and queries Neo4j directly.
 
     Returns
     -------
@@ -927,6 +942,9 @@ def get_entity_to_targets_raw(
         pointing to the maximum belief and evidence count associated with the
         given HGNC gene.
     """
+    if relationship_types is not None:
+        use_sqlite_cache = False
+    
     if sqlite_db_path.exists() and use_sqlite_cache:
         genes_with_confidence = get_sqlite_genes_with_confidence_cache(
             "entity_to_targets",
@@ -935,6 +953,11 @@ def get_entity_to_targets_raw(
             limit=limit
         )
     else:
+        rel_type_clause = (
+            "AND r.stmt_type IN $rel_types"
+            if relationship_types
+            else ""
+        )
         query = dedent(
             f"""\
             MATCH (regulator:BioEntity)-[r:indra_rel]->(gene:BioEntity)
@@ -942,6 +965,7 @@ def get_entity_to_targets_raw(
                 gene.id STARTS WITH "hgnc"                  // Collecting human genes only
                 AND NOT gene.obsolete                       // Skip obsolete
                 AND r.stmt_type <> "Complex"                // Ignore complexes since they are non-directional
+                {rel_type_clause}
                 AND NOT regulator.id STARTS WITH "uniprot"  // This is a simple way to ignore non-human proteins
             RETURN
                 regulator.id,
@@ -955,6 +979,7 @@ def get_entity_to_targets_raw(
             client=client,
             query=query,
             background_gene_ids=background_gene_ids,
+            rel_types=relationship_types,
         )
     return genes_with_confidence
 
@@ -966,6 +991,7 @@ def get_entity_to_regulators(
     background_gene_ids: Optional[Iterable[str]] = None,
     minimum_evidence_count: Optional[int] = 1,
     minimum_belief: Optional[float] = 0.0,
+    relationship_types: Optional[List[str]] = None,
 ) -> Dict[Tuple[str, str], Set[str]]:
     """Get a mapping from each entity in the INDRA database to the set of
     human genes that are causally upstream of it.
@@ -983,6 +1009,11 @@ def get_entity_to_regulators(
     minimum_belief :
         The minimum belief for a relationship to count it as a regulator.
         Defaults to 0.0 (i.e., cutoff not applied).
+    relationship_types :
+        Optional list of relationship types to filter by.
+        If None, all relationship types are included and the SQLite
+        cache is used. If specified, the cache is bypassed and the
+        query is run directly against Neo4j.
 
     Returns
     -------
@@ -993,6 +1024,7 @@ def get_entity_to_regulators(
     genes_with_confidence = get_entity_to_regulators_raw(
         client=client,
         background_gene_ids=background_gene_ids,
+        relationship_types=relationship_types,
     )
     return filter_gene_set_confidences(
         genes_with_confidence,
@@ -1008,6 +1040,7 @@ def get_entity_to_regulators_raw(
     background_gene_ids: Optional[Iterable[str]] = None,
     use_sqlite_cache: bool = True,
     limit: Optional[int] = None,
+    relationship_types: Optional[List[str]] = None,
     sqlite_db_path: Union[Path, str] = SQLITE_CACHE_PATH,
 ) -> Dict[Tuple[str, str], Dict[str, Tuple[float, int]]]:
     """Get all target to regulator relationships
@@ -1026,6 +1059,9 @@ def get_entity_to_regulators_raw(
         APP_CACHE_MODULE found in `indra_cogex.apps.constants`.
     limit :
         If given, limit the number of entities returned to this number.
+    relationship_types :
+        Optional list of relationship types to filter by.
+        If specified, bypasses the SQLite cache and queries Neo4j directly.
 
     Returns
     -------
@@ -1035,6 +1071,10 @@ def get_entity_to_regulators_raw(
         pointing to the maximum belief and evidence count associated with the
         given HGNC gene.
     """
+
+    if relationship_types is not None:
+        use_sqlite_cache = False
+    
     if sqlite_db_path.exists() and use_sqlite_cache:
         genes_with_confidence = get_sqlite_genes_with_confidence_cache(
             "entity_to_regulators",
@@ -1043,6 +1083,11 @@ def get_entity_to_regulators_raw(
             limit=limit
         )
     else:
+        rel_type_clause = (
+            "AND r.stmt_type IN $rel_types"
+            if relationship_types
+            else ""
+        )
         query = dedent(
             f"""\
             MATCH (gene:BioEntity)-[r:indra_rel]->(target:BioEntity)
@@ -1050,6 +1095,7 @@ def get_entity_to_regulators_raw(
                 gene.id STARTS WITH "hgnc"               // Collecting human genes only
                 AND NOT gene.obsolete                    // Skip obsolete
                 AND r.stmt_type <> "Complex"             // Ignore complexes since they are non-directional
+                {rel_type_clause}
                 AND NOT target.id STARTS WITH "uniprot"  // This is a simple way to ignore non-human proteins
             RETURN
                 target.id,
@@ -1063,6 +1109,7 @@ def get_entity_to_regulators_raw(
             client=client,
             query=query,
             background_gene_ids=background_gene_ids,
+            rel_types=relationship_types,
         )
     return genes_with_confidence
 

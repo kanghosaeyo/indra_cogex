@@ -22,12 +22,14 @@ downstream_genes = [
     "CSNK2A2", "ADGRL3", "FAT1", "PLXND1", "FAS", "FGD3", "LIFR"
 ]
 
-result = indra_intermediate_ora(
+result_phospho = indra_intermediate_ora(
     client=client,
     upstream_gene_ids=upstream_genes,
     downstream_gene_ids=downstream_genes,
     minimum_belief=0.5,
     minimum_evidence_count=1,
+    upstream_relationship_types=["Phosphorylation"],
+    downstream_relationship_types=["Activation", "Inhibition", "IncreaseAmount", "DecreaseAmount"],
 )
 
-print(result.head(20))
+print(result_phospho.head(10))
