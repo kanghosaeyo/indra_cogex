@@ -11,7 +11,6 @@ downstream_df = pd.read_csv("resources/phosphoproteomics_significant_gene_list.c
 print(upstream_df.head())
 print(downstream_df.head())
 
-
 result = intermediate_pathway_analysis(
     client=client,
     upstream_df=upstream_df,

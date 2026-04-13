@@ -1,0 +1,23 @@
+{% extends "base_form.html" %}
+
+{% block title %}Intermediate Pathway Analysis{% endblock %}
+
+{% block header %}Intermediate Pathway Analysis{% endblock %}
+
+{% block lead %}
+    This application reconstructs pathways connecting two gene sets through
+    enriched intermediate regulators using INDRA CoGEx, an automatically
+    assembled biomedical knowledge graph. Given an upstream gene set and a
+    downstream gene set, the application identifies intermediate regulators
+    that are statistically enriched in both directions, assembles three-step
+    paths connecting the two gene sets through those intermediates, and scores
+    them by a normalized product of enrichment strength and effect sizes from
+    both input datasets.
+    <br>
+    <br>
+    Upload two files containing your upstream and downstream gene sets. Each
+    file must contain a column with gene symbols and a column with a ranking
+    metric (e.g. percent control, log2 fold change). The ranking metric values
+    will be scaled to [0, 1] using min-max normalization so that upstream and
+    downstream scores are comparable regardless of their original units.
+{% endblock %}

@@ -1,0 +1,227 @@
+{% extends "base.html" %}
+
+{% block title %}Intermediate Pathway Analysis Results{% endblock %}
+
+{% block styles %}
+    {{ super() }}
+    <link
+            href="https://cdn.datatables.net/v/bs4/jszip-3.10.1/dt-2.0.7/b-3.0.2/b-html5-3.0.2/datatables.min.css"
+            rel="stylesheet"
+    />
+{% endblock %}
+
+{% block scripts %}
+    {{ super() }}
+    <script src="https://cdn.datatables.net/v/bs4/jszip-3.10.1/dt-2.0.7/b-3.0.2/b-html5-3.0.2/datatables.min.js"></script>
+    <script src="https://unpkg.com/vis-network/standalone/umd/vis-network.min.js"></script>
+    <script>
+        const datatablesConf = {
+            "order": [[2, "asc"]],
+            pageLength: 10,
+            layout: {
+                bottomStart: {
+                    pageLength: {
+                        menu: [10, 25, 50, 75, 100],
+                    }
+                },
+                topStart: {
+                    buttons: [
+                        {
+                            extend: 'csv',
+                            text: 'Download full table as CSV',
+                            exportOptions: {
+                                modifier: {
+                                    search: 'none'
+                                }
+                            }
+                        }
+                    ]
+                }
+            }
+        };
+
+        $(document).ready(function () {
+            $("#table-intermediates").DataTable(datatablesConf);
+            $("#table-pathways").DataTable({
+                ...datatablesConf,
+                "order": [[3, "desc"]],
+            });
+
+            const networkData = {{ network_data | safe }};
+
+            const upstreamNodes = networkData.nodes.filter(n => n.details.type === "Upstream");
+            const intermediateNodes = networkData.nodes.filter(n => n.details.type === "Intermediate");
+            const downstreamNodes = networkData.nodes.filter(n => n.details.type === "Downstream");
+
+            const maxNodes = Math.max(upstreamNodes.length, intermediateNodes.length, downstreamNodes.length);
+            const totalHeight = maxNodes * 80;
+
+            function assignPositions(nodes, x) {
+                const spacing = totalHeight / (nodes.length + 1);
+                nodes.forEach((node, i) => {
+                    node.x = x;
+                    node.y = (i + 1) * spacing - totalHeight / 2;
+                    node.fixed = { x: true, y: true };
+                });
+            }
+
+            assignPositions(upstreamNodes, 0);
+            assignPositions(intermediateNodes, 500);
+            assignPositions(downstreamNodes, 1000);
+
+            const container = document.getElementById("pathway-network");
+            const options = {
+                physics: { enabled: false },
+                edges: {
+                    smooth: { type: "cubicBezier" },
+                },
+                nodes: {
+                    borderWidth: 2,
+                },
+                interaction: {
+                    hover: true,
+                    tooltipDelay: 100,
+                },
+            };
+            const network = new vis.Network(container, networkData, options);
+
+            const nodeMap = {};
+            networkData.nodes.forEach(n => { nodeMap[n.id] = n; });
+            const edgeMap = {};
+            networkData.edges.forEach(e => { edgeMap[e.id] = e; });
+
+            function showDetails(title, contentHtml) {
+                document.getElementById("details-title").innerText = title;
+                document.getElementById("details-content").innerHTML = contentHtml;
+                document.getElementById("details-panel").style.display = "block";
+            }
+
+            network.on("click", function(params) {
+                if (params.nodes.length > 0) {
+                    const nodeId = params.nodes[0];
+                    const node = nodeMap[nodeId];
+                    const d = node.details;
+                    let html = "";
+
+                    if (d.type === "Intermediate") {
+                        html = `
+                            <table class="table table-sm">
+                                <tr><td><b>Type</b></td><td>Intermediate</td></tr>
+                                <tr><td><b>q-value (combined)</b></td><td>${d.p_combined.toExponential(2)}</td></tr>
+                                <tr><td><b>q-value (combined)</b></td><td>${d.q_combined.toExponential(2)}</td></tr>
+                                <tr><td><b>p-value (downstream)</b></td><td>${d.p_down.toExponential(2)}</td></tr>
+                                <tr><td><b>p-value (upstream)</b></td><td>${d.p_up.toExponential(2)}</td></tr>
+                            </table>`;
+                    } else if (d.type === "Upstream") {
+                        html = `
+                            <table class="table table-sm">
+                                <tr><td><b>Type</b></td><td>Upstream</td></tr>
+                                <tr><td><b>Metric score</b></td><td>${d.metric_score.toFixed(3)}</td></tr>
+                            </table>`;
+                    } else {
+                        html = `
+                            <table class="table table-sm">
+                                <tr><td><b>Type</b></td><td>Downstream</td></tr>
+                                <tr><td><b>Metric score</b></td><td>${d.metric_score.toFixed(3)}</td></tr>
+                            </table>`;
+                    }
+                    showDetails(nodeId, html);
+
+                } else if (params.edges.length > 0) {
+                    const edgeId = params.edges[0];
+                    const edge = edgeMap[edgeId];
+                    const d = edge.details;
+                    const html = `
+                        <table class="table table-sm">
+                            <tr><td><b>Source</b></td><td>${d.source}</td></tr>
+                            <tr><td><b>Target</b></td><td>${d.target}</td></tr>
+                            <tr><td><b>Pathway score</b></td><td>${d.pathway_score.toFixed(3)}</td></tr>
+                        </table>`;
+                    showDetails(`${d.source} → ${d.target}`, html);
+                }
+            });
+        });
+    </script>
+{% endblock %}
+
+{% block container %}
+    <div class="card card-body bg-light">
+        <h1 class="display-3">Intermediate Pathway Analysis Results</h1>
+
+        <h3>Network for Top 100 Pathways</h3>
+        <p>
+            Upstream genes (green), intermediates (orange), downstream genes (blue).
+            Edge thickness reflects average pathway score. Top 100 pathways shown.
+            Click any node or edge to see details.
+        </p>
+        <div style="display: flex; gap: 1em;">
+            <div id="pathway-network" style="height: 600px; flex: 3; border: 1px solid #ddd; background: #fff;"></div>
+            <div id="details-panel" style="flex: 1; border: 1px solid #ddd; background: #fff; padding: 1em; display: none;">
+                <h5 id="details-title"></h5>
+                <div id="details-content"></div>
+            </div>
+        </div>
+
+        <h3 style="margin-top: 2em;">Enriched Intermediates</h3>
+        <p>
+            Intermediate regulators enriched in both directions using Fisher's
+            exact test, corrected using {{ method }} and α={{ alpha }}.
+        </p>
+        <table class="table table-hover table-striped" id="table-intermediates" style="width: 100%;">
+            <thead>
+            <tr>
+                <th scope="col">CURIE</th>
+                <th scope="col">Name</th>
+                <th scope="col"><i>p</i>-value (combined)</th>
+                <th scope="col"><i>q</i>-value (combined)</th>
+                <th scope="col"><i>p</i>-value (downstream)</th>
+                <th scope="col"><i>p</i>-value (upstream)</th>
+            </tr>
+            </thead>
+            <tbody>
+            {% for _, row in intermediates.iterrows() %}
+                <tr>
+                    <td><a href="https://bioregistry.io/{{ row.curie }}" target="_blank">{{ row.curie }}</a></td>
+                    <td>{{ row['name'] }}</td>
+                    <td>{{ "{:.2e}".format(row.p_combined) }}</td>
+                    <td>{{ "{:.2e}".format(row.q_combined) }}</td>
+                    <td>{{ "{:.2e}".format(row.p_down) }}</td>
+                    <td>{{ "{:.2e}".format(row.p_up) }}</td>
+                </tr>
+            {% endfor %}
+            </tbody>
+        </table>
+
+        <h3>Scored Pathways</h3>
+        <p>
+            Three-step paths scored by normalized enrichment strength and
+            effect sizes from both input datasets.
+        </p>
+        <table class="table table-hover table-striped" id="table-pathways" style="width: 100%;">
+            <thead>
+            <tr>
+                <th scope="col">Upstream Gene</th>
+                <th scope="col">Intermediate</th>
+                <th scope="col">Downstream Gene</th>
+                <th scope="col">Pathway Score</th>
+                <th scope="col">Upstream Score</th>
+                <th scope="col">Downstream Score</th>
+                <th scope="col"><i>q</i>-value</th>
+            </tr>
+            </thead>
+            <tbody>
+            {% for _, row in pathways.iterrows() %}
+                <tr>
+                    <td>{{ row.upstream_gene }}</td>
+                    <td>{{ row.intermediate }}</td>
+                    <td>{{ row.downstream_gene }}</td>
+                    <td>{{ "{:.3f}".format(row.pathway_score) }}</td>
+                    <td>{{ "{:.3f}".format(row.upstream_score) }}</td>
+                    <td>{{ "{:.3f}".format(row.downstream_score) }}</td>
+                    <td>{{ "{:.2e}".format(row.q_combined) }}</td>
+                </tr>
+            {% endfor %}
+            </tbody>
+        </table>
+    </div>
+{% endblock %}

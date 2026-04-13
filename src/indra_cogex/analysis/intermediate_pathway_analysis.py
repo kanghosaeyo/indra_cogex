@@ -21,13 +21,10 @@ def read_gene_set(
     gene_col: str,
     metric_col: str,
 ) -> Tuple[List[str], Dict[str, float]]:
-    """Read a gene set file and return gene list and scaled metric scores.
+    """Read a gene set DataFrame and return gene list and scaled metric scores.
 
-    Groups by gene name and takes the minimum metric value per gene
-    to handle cases where multiple rows exist per gene. 
-    Metric values are scaled to [0, 1] using
-    min-max normalization so that upstream and downstream scores are
-    comparable regardless of their original units.
+    Groups by gene name, takes the minimum metric value per gene, and
+    scales to [0, 1] using min-max normalization.
 
     Parameters
     ----------
@@ -84,25 +81,18 @@ def assemble_pathways(
     intermediates_df :
         DataFrame of enriched intermediates from indra_intermediate_ora.
     entity_to_regulators :
-        Mapping of entity to set of regulating genes from
-        get_entity_to_regulators.
+        Mapping from get_entity_to_regulators.
     entity_to_targets :
-        Mapping of entity to set of regulated genes from
-        get_entity_to_targets.
+        Mapping from get_entity_to_targets.
     upstream_scores :
         Dict mapping upstream gene symbols to scaled scores in [0, 1].
-        If empty, defaults to 1.0 for all genes.
     downstream_scores :
         Dict mapping downstream gene symbols to scaled scores in [0, 1].
-        If empty, defaults to 1.0 for all genes.
 
     Returns
     -------
     :
-        DataFrame of scored three-step paths with columns:
-        upstream_gene, intermediate, downstream_gene, path,
-        p_combined, q_combined, mlp_combined, upstream_score,
-        downstream_score, norm_enrichment, pathway_score.
+        DataFrame of scored three-step paths.
     """
     upstream_gene_set, _ = parse_gene_list(upstream_genes)
     upstream_hgnc_ids = set(upstream_gene_set.keys())
@@ -131,8 +121,8 @@ def assemble_pathways(
                     "p_combined": row["p_combined"],
                     "q_combined": row["q_combined"],
                     "mlp_combined": row["mlp_combined"],
-                    "upstream_score": upstream_scores.get(upstream_name, 1.0),
-                    "downstream_score": downstream_scores.get(downstream_name, 1.0),
+                    "upstream_score": upstream_scores.get(upstream_name, 0.0),
+                    "downstream_score": downstream_scores.get(downstream_name, 0.0),
                 })
         
     if not pathways:
@@ -185,6 +175,111 @@ def build_network(pathways_df: pd.DataFrame) -> nx.DiGraph:
 
     return G
 
+def build_network_visjs(
+        pathways_df: pd.DataFrame,
+        network: nx.DiGraph,
+        intermediates_df: pd.DataFrame,
+        upstream_scores: Dict[str, float],
+        downstream_scores: Dict[str, float],
+        top_n: int = 100,
+) -> dict:
+    """Build vis.js nodes and edges from pathway results.
+
+    Parameters
+    ----------
+    pathways_df :
+        DataFrame of scored three-step paths from assemble_pathways.
+    network :
+        NetworkX DiGraph from build_network.
+    intermediates_df :
+        DataFrame of enriched intermediates from indra_intermediate_ora.
+    upstream_scores :
+        Dict mapping upstream gene symbols to scaled scores in [0, 1].
+    downstream_scores :
+        Dict mapping downstream gene symbols to scaled scores in [0, 1].
+    top_n : 
+        Maximum number of pathways to include in the network visualization.
+        If pathways_df has more than top_n unique intermediates, only the
+        top_n pathways by pathway_score.
+
+    Returns
+    -------
+    :
+        Dictionary containing nodes and edges in vis.js format.
+    """
+    pathways_df = pathways_df.head(top_n)
+
+    from indra_cogex.analysis.intermediate_pathway_analysis import build_network
+    network = build_network(pathways_df)
+
+    upstream_genes = set(pathways_df["upstream_gene"].unique())
+    intermediates = set(pathways_df["intermediate"].unique())
+
+    intermediates_lookup = {
+        row["name"]: row
+        for _, row in intermediates_df.iterrows()
+    }
+
+    nodes = []
+    for node in network.nodes():
+        if node in intermediates:
+            color, shape, size = "#FF8C00", "ellipse", 45
+            row = intermediates_lookup.get(node, {})
+            details = {
+                "type": "Intermediate",
+                "q_combined": float(row["q_combined"]) if "q_combined" in row else None,
+                "p_down": float(row["p_down"]) if "p_down" in row else None,
+                "p_up": float(row["p_up"]) if "p_up" in row else None,
+            }
+            title = f"{node} (Intermediate)"
+        elif node in upstream_genes:
+            color, shape, size = "#4CAF50", "box", 35
+            details = {
+                "type": "Upstream",
+                "metric_score": float(upstream_scores.get(node, 1.0)),
+            }
+            title = f"{node} (Upstream)"
+        else:
+            color, shape, size = "#2196F3", "box", 35
+            details = {
+                "type": "Downstream",
+                "metric_score": float(downstream_scores.get(node, 1.0)),
+            }
+            title = f"{node} (Downstream)"
+
+        nodes.append({
+            "id": node,
+            "label": node,
+            "title": title,
+            "color": {"background": color, "border": "#37474F"},
+            "shape": shape,
+            "size": size,
+            "font": {"size": 22, "color": "#000000", "face": "arial"},
+            "borderWidth": 2,
+            "details": details,
+        })
+
+    edges = []
+    for i, (source, target, data) in enumerate(network.edges(data=True)):
+        weight = data.get("weight", 0)
+        width = max(1.0, weight * 10)
+        edges.append({
+            "id": f"e{i}",
+            "from": source,
+            "to": target,
+            "width": width,
+            "title": f"Pathway score: {weight:.3f}",
+            "arrows": {"to": {"enabled": True, "scaleFactor": 0.5}},
+            "color": {"color": "rgba(100,100,100,0.6)"},
+            "details": {
+                "source": source,
+                "target": target,
+                "pathway_score": float(weight),
+            },
+        })
+
+    return {"nodes": nodes, "edges": edges}
+
 @autoclient()
 def intermediate_pathway_analysis(
     upstream_df: pd.DataFrame,
@@ -208,19 +303,15 @@ def intermediate_pathway_analysis(
     """Reconstruct pathways connecting two gene sets through enriched
     intermediate regulators using INDRA CoGEx.
 
-    Connects an upstream gene set to a downstream gene set through
-    statistically enriched intermediate regulators, scored by a
-    normalized product of enrichment strength and scaled effect sizes
-    from both input datasets.
+    Corresponding web-form based analysis can be found at:
+    https://discovery.indra.bio/gene/pathway
 
     Parameters
     ----------
     upstream_df :
-        DataFrame containing upstream gene data. Must contain columns
-        specified by upstream_gene_col and upstream_metric_col.
+        DataFrame containing upstream gene data.
     downstream_df :
-        DataFrame containing downstream gene data. Must contain columns
-        specified by downstream_gene_col and downstream_metric_col.
+        DataFrame containing downstream gene data.
     upstream_gene_col :
         Column name for gene symbols in upstream_df.
     upstream_metric_col :
@@ -232,42 +323,34 @@ def intermediate_pathway_analysis(
         Column name for the ranking metric in downstream_df. Values
         will be scaled to [0, 1] using min-max normalization.
     upstream_relationship_types :
-        Optional list of relationship types to filter by when finding
-        entities downstream of the upstream gene set. 
-        If None, all relationship types are included and the SQLite 
-        cache is used.
+        Optional list of relationship types to filter the upstream ORA,
+        e.g. ['Phosphorylation']. If None, uses the SQLite cache.
     downstream_relationship_types :
-        Optional list of relationship types to filter by when finding
-        entities upstream of the downstream gene set.
-        If None, all relationship types are included and the SQLite
-        cache is used.
+        Optional list of relationship types to filter the downstream ORA,
+        e.g. ['Activation', 'Inhibition', 'IncreaseAmount', 'DecreaseAmount'].
+        If None, uses the SQLite cache.
     background_gene_ids :
-        List of HGNC gene identifiers for the background gene set. If
-        not given, all genes with HGNC IDs are used as the background.
+        Background gene set for ORA. Defaults to all human genes.
     minimum_evidence_count :
-        Minimum number of evidences to consider a causal relationship
+        Minimum number of evidences to consider a causal relationship.
     minimum_belief :
-        Minimum belief to consider a causal relationship
+        Minimum belief to consider a causal relationship.
     pathway_score_threshold :
-        Optional minimum pathway score to include in results. If None,
-        all paths are returned.
+        Optional minimum pathway score filter.
     method :
-        Multiple testing correction method, by default 'fdr_bh'
+        Multiple testing correction method, by default 'fdr_bh'.
     alpha :
-        Significance threshold for filtering, by default 0.05
+        Significance threshold, by default 0.05.
     keep_insignificant :
-        Whether to retain insignificant intermediates, by default False
+        Whether to retain insignificant intermediates, by default False.
     client :
-        Neo4jClient
+        Neo4jClient, managed automatically by the autoclient decorator.
 
     Returns
     -------
     :
-        Dictionary containing:
-        - 'intermediates': DataFrame of enriched intermediate regulators
-          with combined p-values and q-values
-        - 'pathways': DataFrame of scored three-step paths
-        - 'network': NetworkX DiGraph of the pathway network
+        Dictionary with keys 'intermediates', 'pathways', 'network',
+        'upstream_scores', and 'downstream_scores'.
     """
 
     upstream_genes, upstream_scores = read_gene_set(
@@ -301,6 +384,8 @@ def intermediate_pathway_analysis(
             "intermediates": intermediates_df,
             "pathways": pd.DataFrame(),
             "network": nx.DiGraph(),
+            "upstream_scores": upstream_scores,
+            "downstream_scores": downstream_scores,
         }
     
     entity_to_regulators = get_entity_to_regulators(
@@ -332,6 +417,8 @@ def intermediate_pathway_analysis(
             "intermediates": intermediates_df,
             "pathways": pd.DataFrame(),
             "network": nx.DiGraph(),
+            "upstream_scores": upstream_scores,
+            "downstream_scores": downstream_scores,
         }
     
     if pathway_score_threshold is not None:
@@ -345,5 +432,8 @@ def intermediate_pathway_analysis(
         "intermediates": intermediates_df,
         "pathways": pathways_df,
         "network": G,
+        "upstream_scores": upstream_scores,
+        "downstream_scores": downstream_scores,
     }
+
 

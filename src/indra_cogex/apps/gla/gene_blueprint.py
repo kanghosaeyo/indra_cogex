@@ -7,9 +7,10 @@ import flask
 import pandas as pd
 from flask import url_for, abort
 from flask_wtf import FlaskForm
-from wtforms import BooleanField, SubmitField, TextAreaField, StringField
+from wtforms import BooleanField, SubmitField, TextAreaField, StringField, FileField
 from wtforms.validators import DataRequired
 import io
+import json
 
 
 from indra_cogex.analysis.gene_analysis import (
@@ -19,6 +20,10 @@ from indra_cogex.analysis.gene_analysis import (
     parse_gene_list,
     kinase_analysis,
     parse_phosphosite_list,
+)
+from indra_cogex.analysis.intermediate_pathway_analysis import (
+    intermediate_pathway_analysis,
+    build_network_visjs,
 )
 from indra_cogex.apps.constants import INDRA_COGEX_WEB_LOCAL
 from indra_cogex.apps.proxies import client
@@ -176,6 +181,55 @@ class KinaseAnalysisForm(FlaskForm):
         if not self.background_phosphosites.data:
             return []
         return parse_text_field(self.background_phosphosites.data)
+    
+class IntermediatePathwayForm(FlaskForm):
+    """A form for intermediate pathway analysis."""
+
+    upstream_file = FileField("Upstream File", validators=[DataRequired()])
+    downstream_file = FileField("Downstream File", validators=[DataRequired()])
+    upstream_gene_col = StringField(
+        "Gene Name Column",
+        description="The name of the column containing gene names (HGNC symbols) "
+                    "in the upstream file.",
+        validators=[DataRequired()],
+    )
+    upstream_metric_col = StringField(
+        "Ranking Metric Column",
+        description="The name of the column containing the ranking metric values "
+                    "in the upstream file.",
+        validators=[DataRequired()],
+    )
+    downstream_gene_col = StringField(
+        "Gene Name Column",
+        description="The name of the column containing gene names (HGNC symbols) "
+                    "in the downstream file.",
+        validators=[DataRequired()],
+    )
+    downstream_metric_col = StringField(
+        "Ranking Metric Column",
+        description="The name of the column containing the ranking metric values "
+                    "in the downstream file.",
+        validators=[DataRequired()],
+    )
+    upstream_relationship_types = StringField(
+        "Upstream Relationship Types (Optional)",
+        description="List of relationship types to filter by when "
+                    "finding entities downstream of the upstream gene set. "
+                    "If not provided, all relationship types are used.",
+    )
+    downstream_relationship_types = StringField(
+        "Downstream Relationship Types (Optional)",
+        description="List of relationship types to filter by when "
+                    "finding entities upstream of the downstream gene set. "
+                    "If not provided, all relationship types are used.",
+    )
+    minimum_evidence = minimum_evidence_field
+    minimum_belief = minimum_belief_field
+    alpha = alpha_field
+    correction = correction_field
+    keep_insignificant = keep_insignificant_field
+    submit = SubmitField("Submit", render_kw={"id": "submit-btn"})
+
 
 
 @gene_blueprint.route("/discrete", methods=["GET", "POST"])
@@ -413,4 +467,86 @@ def kinase_analysis_route():
             "BLK-Y389", "ROBO1-Y1073", "ROCK2-Y722", "BDKRB2-Y177", "BECN1-Y333",
             "RRAS-Y66", "RPS6KA3-Y483", "SCAMP3-Y86"
         ]),
+    )
+
+@gene_blueprint.route("/intermediate", methods=["GET", "POST"])
+def intermediate_pathway_analysis_route():
+    """Render the intermediate pathway analysis form and handle form submission.
+        
+    Returns
+    -------
+    str
+    Rendered HTML template.
+    """
+    form = IntermediatePathwayForm()
+    if form.validate_on_submit():
+        upstream_file = form.upstream_file.data
+        upstream_sep = "," if upstream_file.filename.endswith(".csv") else "\t"
+        upstream_df = pd.read_csv(
+            io.StringIO(upstream_file.read().decode("utf-8")),
+            sep=upstream_sep,
+        )
+
+        downstream_file = form.downstream_file.data
+        downstream_sep = "," if downstream_file.filename.endswith(".csv") else "\t"
+        downstream_df = pd.read_csv(
+            io.StringIO(downstream_file.read().decode("utf-8")),
+            sep=downstream_sep,
+        )
+
+        upstream_relationship_types = None
+        if form.upstream_relationship_types.data:
+            upstream_relationship_types = [
+                r.strip()
+                for r in form.upstream_relationship_types.data.split(",")
+                if r.strip()
+            ]
+        
+        downstream_relationship_types = None
+        if form.downstream_relationship_types.data:
+            downstream_relationship_types = [
+                r.strip()
+                for r in form.downstream_relationship_types.data.split(",")
+                if r.strip()
+            ]
+
+        results = intermediate_pathway_analysis(
+            client=client,
+            upstream_df=upstream_df,
+            downstream_df=downstream_df,
+            upstream_gene_col=form.upstream_gene_col.data,
+            upstream_metric_col=form.upstream_metric_col.data,
+            downstream_gene_col=form.downstream_gene_col.data,
+            downstream_metric_col=form.downstream_metric_col.data,
+            upstream_relationship_types=upstream_relationship_types,
+            downstream_relationship_types=downstream_relationship_types,
+            minimum_evidence_count=form.minimum_evidence.data,
+            minimum_belief=form.minimum_belief.data,
+            method=form.correction.data,
+            alpha=form.alpha.data,
+            keep_insignificant=form.keep_insignificant.data,
+        )
+
+        network_data = build_network_visjs(
+            results["pathways"],
+            results["network"],
+            intermediates_df=results["intermediates"],
+            upstream_scores=results["upstream_scores"],
+            downstream_scores=results["downstream_scores"],
+        )
+
+        return flask.render_template(
+            "gene_analysis/intermediate_results.html",
+            intermediates=results["intermediates"],
+            pathways=results["pathways"],
+            network_data=json.dumps(network_data),
+            alpha=form.alpha.data,
+            method=form.correction.data,
+            minimum_evidence=form.minimum_evidence.data,
+            minimum_belief=form.minimum_belief.data,
+        )
+    
+    return flask.render_template(
+        "gene_analysis/intermediate_form.html",
+        form=form,
     )
