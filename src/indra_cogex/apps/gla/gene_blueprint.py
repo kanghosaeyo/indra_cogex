@@ -537,8 +537,8 @@ def intermediate_pathway_analysis_route():
 
         return flask.render_template(
             "gene_analysis/intermediate_results.html",
-            intermediates=results["intermediates"],
-            pathways=results["pathways"],
+            intermediates=results["intermediates"].head(200),
+            pathways=results["pathways"].head(500),
             network_data=json.dumps(network_data),
             alpha=form.alpha.data,
             method=form.correction.data,
