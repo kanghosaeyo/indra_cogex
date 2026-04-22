@@ -20,11 +20,18 @@ def read_gene_set(
     df: pd.DataFrame,
     gene_col: str,
     metric_col: str,
+    metric_min: Optional[float] = None,
+    metric_max: Optional[float] = None,
+    smaller_is_stronger: bool = False,
 ) -> Tuple[List[str], Dict[str, float]]:
     """Read a gene set DataFrame and return gene list and scaled metric scores.
 
     Groups by gene name, takes the minimum metric value per gene, and
-    scales to [0, 1] using min-max normalization.
+    scales to [0, 1] using absolute values. If metric_min and metric_max
+    are both provided, uses those as the scaling bounds on the absolute
+    values; otherwise infers bounds from the data. If smaller_is_stronger
+    is True, the scaled score is inverted so that the smallest absolute
+    input values receive the highest scores.
 
     Parameters
     ----------
@@ -34,6 +41,18 @@ def read_gene_set(
         Column name for gene symbols.
     metric_col :
         Column name for the ranking metric values.
+    metric_min :
+        Optional lower bound of the expected input range, expressed as
+        an absolute value (e.g. 0). If provided together with metric_max,
+        used instead of data-inferred bounds.
+    metric_max :
+        Optional upper bound of the expected input range, expressed as
+        an absolute value (e.g. 100). Must be provided together with
+        metric_min.
+    smaller_is_stronger :
+        If True, invert the scaled scores so that smaller absolute input
+        values receive scores closer to 1. Useful for metrics like EC50
+        or Kd where lower values indicate stronger effect. Default False.
 
     Returns
     -------
@@ -43,10 +62,25 @@ def read_gene_set(
     """
 
     gene_effects = df.groupby(gene_col).agg({metric_col: "min"}).reset_index()
+
+    if not pd.api.types.is_numeric_dtype(gene_effects[metric_col]):
+        raise ValueError(
+            f"Metric column '{metric_col}' must contain numeric values."
+        )
+
     gene_effects.columns = ["gene", "metric"]
 
-    scaler = MinMaxScaler()
-    gene_effects["scaled_metric"] = scaler.fit_transform(gene_effects[["metric"]].abs())
+    values = gene_effects[["metric"]].abs()
+
+    if metric_min is not None and metric_max is not None:
+        scaled = (values - metric_min) / (metric_max - metric_min)
+        gene_effects["scaled_metric"] = scaled.clip(0, 1)
+    else:
+        scaler = MinMaxScaler()
+        gene_effects["scaled_metric"] = scaler.fit_transform(values)
+
+    if smaller_is_stronger:
+        gene_effects["scaled_metric"] = 1.0 - gene_effects["scaled_metric"]
 
     gene_set, _ = parse_gene_list(gene_effects["gene"].tolist())
     
@@ -181,7 +215,8 @@ def build_network_visjs(
         intermediates_df: pd.DataFrame,
         upstream_scores: Dict[str, float],
         downstream_scores: Dict[str, float],
-        top_n: int = 100,
+        top_n_intermediates: int = 10,
+        top_n_pathways: int = 100,
 ) -> dict:
     """Build vis.js nodes and edges from pathway results.
 
@@ -197,53 +232,100 @@ def build_network_visjs(
         Dict mapping upstream gene symbols to scaled scores in [0, 1].
     downstream_scores :
         Dict mapping downstream gene symbols to scaled scores in [0, 1].
-    top_n : 
-        Maximum number of pathways to include in the network visualization.
-        If pathways_df has more than top_n unique intermediates, only the
-        top_n pathways by pathway_score.
+    top_n_intermediates :
+        Maximum number of unique intermediates to include, selected by
+        minimum combined q-value.
+    top_n_pathways :
+        Maximum number of pathways to include after filtering to
+        top_n_intermediates. Pathways are ranked by pathway_score.
 
     Returns
     -------
     :
         Dictionary containing nodes and edges in vis.js format.
     """
-    pathways_df = pathways_df.head(top_n)
+    top_intermediates = (
+        intermediates_df
+        .nsmallest(top_n_intermediates, "q_combined")["name"]
+        .tolist()
+    )
+
+    pathways_df = (
+        pathways_df[pathways_df["intermediate"].isin(top_intermediates)]
+        .nlargest(top_n_pathways, "pathway_score")
+        .reset_index(drop=True)
+    )
 
     from indra_cogex.analysis.intermediate_pathway_analysis import build_network
     network = build_network(pathways_df)
 
     upstream_genes = set(pathways_df["upstream_gene"].unique())
-    intermediates = set(pathways_df["intermediate"].unique())
+    intermediates = set(top_intermediates)
 
     intermediates_lookup = {
         row["name"]: row
         for _, row in intermediates_df.iterrows()
     }
 
-    nodes = []
+    intermediate_scores_raw = {
+        name: -np.log10(max(float(intermediates_lookup[name]["q_combined"]), 1e-300))
+        for name in intermediates
+        if name in intermediates_lookup
+    }
+    
+    if len(intermediate_scores_raw) > 1:
+        min_iscore = min(intermediate_scores_raw.values())
+        max_iscore = max(intermediate_scores_raw.values())
+        score_range = max_iscore - min_iscore if max_iscore > min_iscore else 1.0
+        intermediate_scores_norm = {
+            name: (score - min_iscore) / score_range
+            for name, score in intermediate_scores_raw.items()
+        }
+    else:
+        intermediate_scores_norm = {name: 1.0 for name in intermediate_scores_raw}
+
+    def _score_to_hex(score: float, base_rgb: tuple) -> str:
+        """Apply gradient from a light tint (score=0) to the full base color (score=1)."""
+        r0, g0, b0 = base_rgb
+        t = 0.15 + 0.85 * float(score)
+        r = int(255 * (1 - t) + r0 * t)
+        g = int(255 * (1 - t) + g0 * t)
+        b = int(255 * (1 - t) + b0 * t)
+        return f"#{r:02X}{g:02X}{b:02X}"
+
+    nodes = [] 
     for node in network.nodes():
         if node in intermediates:
-            color, shape, size = "#FF8C00", "ellipse", 45
+            shape, size = "ellipse", 45
             row = intermediates_lookup.get(node, {})
+            norm_score = intermediate_scores_norm.get(node, 0.0)
+            color = _score_to_hex(norm_score, (255, 140, 0))
             details = {
                 "type": "Intermediate",
+                "curie": row["curie"] if "curie" in row else None,
+                "p_combined": float(row["p_combined"]) if "p_combined" in row else None,
                 "q_combined": float(row["q_combined"]) if "q_combined" in row else None,
                 "p_down": float(row["p_down"]) if "p_down" in row else None,
                 "p_up": float(row["p_up"]) if "p_up" in row else None,
+                "hgnc_url": f"https://www.genenames.org/tools/search/#!/?query={node}"
             }
             title = f"{node} (Intermediate)"
         elif node in upstream_genes:
-            color, shape, size = "#4CAF50", "box", 35
+            shape, size = "box", 35
+            color = _score_to_hex(upstream_scores.get(node, 0.0), (76, 175, 80))
             details = {
                 "type": "Upstream",
-                "metric_score": float(upstream_scores.get(node, 1.0)),
+                "metric_score": float(upstream_scores.get(node, 0.0)),
+                "hgnc_url": f"https://www.genenames.org/tools/search/#!/?query={node}"
             }
             title = f"{node} (Upstream)"
         else:
-            color, shape, size = "#2196F3", "box", 35
+            shape, size = "box", 35
+            color = _score_to_hex(downstream_scores.get(node, 0.0), (33, 150, 243))
             details = {
                 "type": "Downstream",
-                "metric_score": float(downstream_scores.get(node, 1.0)),
+                "metric_score": float(downstream_scores.get(node, 0.0)),
+                "hgnc_url": f"https://www.genenames.org/tools/search/#!/?query={node}"
             }
             title = f"{node} (Downstream)"
 
@@ -258,6 +340,31 @@ def build_network_visjs(
             "borderWidth": 2,
             "details": details,
         })
+
+    for name in top_intermediates:
+        if name not in {n["id"] for n in nodes}:
+            row = intermediates_lookup.get(name, {})
+            norm_score = intermediate_scores_norm.get(name, 0.0)
+            color = _score_to_hex(norm_score, (255, 140, 0))
+            nodes.append({
+                "id": name,
+                "label": name,
+                "title": f"{name} (Intermediate — no top pathways)",
+                "color": {"background": color, "border": "#37474F"},
+                "shape": "ellipse",
+                "size": 45,
+                "font": {"size": 22, "color": "#000000", "face": "arial"},
+                "borderWidth": 2,
+                "details": {
+                    "type": "Intermediate",
+                    "curie": row["curie"] if "curie" in row else None,
+                    "p_combined": float(row["p_combined"]) if "p_combined" in row else None,
+                    "q_combined": float(row["q_combined"]) if "q_combined" in row else None,
+                    "p_down": float(row["p_down"]) if "p_down" in row else None,
+                    "p_up": float(row["p_up"]) if "p_up" in row else None,
+                    "hgnc_url": f"https://www.genenames.org/tools/search/#!/?query={name}",
+                },
+            })
 
     edges = []
     for i, (source, target, data) in enumerate(network.edges(data=True)):
@@ -288,6 +395,12 @@ def intermediate_pathway_analysis(
     upstream_metric_col: str,
     downstream_gene_col: str,
     downstream_metric_col: str,
+    upstream_metric_min: Optional[float] = None,
+    upstream_metric_max: Optional[float] = None,
+    upstream_smaller_is_stronger: bool = False,
+    downstream_metric_min: Optional[float] = None,
+    downstream_metric_max: Optional[float] = None,
+    downstream_smaller_is_stronger: bool = False,
     upstream_relationship_types: Optional[List[str]] = None,
     downstream_relationship_types: Optional[List[str]] = None,
     background_gene_ids: Optional[Collection[str]] = None,
@@ -322,12 +435,28 @@ def intermediate_pathway_analysis(
     downstream_metric_col :
         Column name for the ranking metric in downstream_df. Values
         will be scaled to [0, 1] using min-max normalization.
+    upstream_metric_min :
+        Optional lower bound of the upstream metric range (absolute value)
+        for scaling. If provided with upstream_metric_max, overrides
+        data-inferred bounds.
+    upstream_metric_max :
+        Optional upper bound of the upstream metric range (absolute value).
+        Must be provided together with upstream_metric_min.
+    upstream_smaller_is_stronger :
+        If True, invert upstream scores so smaller absolute values rank
+        higher. Default False.
+    downstream_metric_min :
+        Optional lower bound of the downstream metric range (absolute value).
+    downstream_metric_max :
+        Optional upper bound of the downstream metric range (absolute value).
+    downstream_smaller_is_stronger :
+        If True, invert downstream scores so smaller absolute values rank
+        higher. Default False.
     upstream_relationship_types :
-        Optional list of relationship types to filter the upstream ORA,
-        e.g. ['Phosphorylation']. If None, uses the SQLite cache.
+        Optional list of relationship types to filter the upstream ORA. 
+        If None, uses the SQLite cache.
     downstream_relationship_types :
-        Optional list of relationship types to filter the downstream ORA,
-        e.g. ['Activation', 'Inhibition', 'IncreaseAmount', 'DecreaseAmount'].
+        Optional list of relationship types to filter the downstream ORA.
         If None, uses the SQLite cache.
     background_gene_ids :
         Background gene set for ORA. Defaults to all human genes.
@@ -344,7 +473,7 @@ def intermediate_pathway_analysis(
     keep_insignificant :
         Whether to retain insignificant intermediates, by default False.
     client :
-        Neo4jClient, managed automatically by the autoclient decorator.
+        Neo4jClient
 
     Returns
     -------
@@ -357,12 +486,18 @@ def intermediate_pathway_analysis(
         df=upstream_df,
         gene_col=upstream_gene_col,
         metric_col=upstream_metric_col,
+        metric_min=upstream_metric_min,
+        metric_max=upstream_metric_max,
+        smaller_is_stronger=upstream_smaller_is_stronger,
     )
 
     downstream_genes, downstream_scores = read_gene_set(
         df=downstream_df,
         gene_col=downstream_gene_col,
         metric_col=downstream_metric_col,
+        metric_min=downstream_metric_min,
+        metric_max=downstream_metric_max,
+        smaller_is_stronger=downstream_smaller_is_stronger,
     )
 
     intermediates_df = indra_intermediate_ora(

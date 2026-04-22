@@ -5,19 +5,102 @@
 {% block header %}Intermediate Pathway Analysis{% endblock %}
 
 {% block lead %}
-    This application reconstructs pathways connecting two gene sets through
-    enriched intermediate regulators using INDRA CoGEx, an automatically
-    assembled biomedical knowledge graph. Given an upstream gene set and a
-    downstream gene set, the application identifies intermediate regulators
-    that are statistically enriched in both directions, assembles three-step
-    paths connecting the two gene sets through those intermediates, and scores
-    them by a normalized product of enrichment strength and effect sizes from
-    both input datasets.
+    This application reconstructs three-step causal pathways connecting two
+    gene sets through statistically enriched intermediate regulators, using
+    <a href="https://github.com/gyorilab/indra_cogex" target="_blank">INDRA CoGEx</a>,
+    an automatically assembled biomedical knowledge graph. Given an upstream gene set
+    and a downstream gene set, the application identifies intermediate regulators
+    statistically enriched in both directions, assembles three-step paths
+    (<code>upstream gene → intermediate → downstream gene</code>), and scores them
+    by a normalized product of enrichment strength and effect sizes from both datasets.
+    <br><br>
+    Upload two files containing your upstream and downstream gene sets. Each file must
+    contain a column with gene symbols and a column with a ranking metric. Metric values 
+    will be scaled to [0, 1] so that upstream and downstream scores are comparable regardless 
+    of their original units.
+    <br><br>
+    <strong>Example dataset:</strong> 
     <br>
+    AZD5363 (capivasertib, pan-AKT inhibitor)
     <br>
-    Upload two files containing your upstream and downstream gene sets. Each
-    file must contain a column with gene symbols and a column with a ranking
-    metric (e.g. percent control, log2 fold change). The ranking metric values
-    will be scaled to [0, 1] using min-max normalization so that upstream and
-    downstream scores are comparable regardless of their original units.
+    <a href="{{ url_for('gla.intermediate_example_file', filename='AZD5363_upstream.csv') }}">
+        download upstream file</a>
+    (gene column: <code>Target</code>, metric column: <code>EC50 [nM]</code>,
+    invert metric: ✓)
+    <br>
+    <a href="{{ url_for('gla.intermediate_example_file', filename='AZD5363_downstream.csv') }}">
+        download downstream file</a>
+    (gene column: <code>Gene names</code>, metric column: <code>Mean log2FC</code>)
+{% endblock %}
+
+{% block head %}
+    {{ super() }}
+    <link rel="stylesheet"
+          href="https://cdn.jsdelivr.net/gh/bbbootstrap/libraries@main/choices.min.css">
+{% endblock %}
+
+{% block scripts %}
+    {{ super() }}
+    <script src="https://cdn.jsdelivr.net/gh/bbbootstrap/libraries@main/choices.min.js"></script>
+    <script id="stmt-types-json" type="application/json">
+        {{ stmt_types_json | safe }}
+    </script>
+    <script>
+    document.addEventListener("DOMContentLoaded", function () {
+        const stmtTypes = JSON.parse(
+            document.getElementById("stmt-types-json").textContent
+        );
+
+        function initRelTypeField(fieldId, hiddenId) {
+            const original = document.getElementById(fieldId);
+            if (!original) return;
+
+            // Build a <select multiple> to replace the text input
+            const select = document.createElement("select");
+            select.multiple = true;
+            select.id = fieldId + "_choices";
+
+            stmtTypes.forEach(t => {
+                const opt = document.createElement("option");
+                opt.value = t;
+                opt.textContent = t;
+                select.appendChild(opt);
+            });
+
+            original.parentNode.insertBefore(select, original);
+            original.style.display = "none";
+            
+            const existing = original.value
+                ? original.value.split(",").map(s => s.trim()).filter(Boolean)
+                : [];
+
+            const choices = new Choices(select, {
+                removeItemButton: true,
+                searchEnabled: true,
+                placeholder: true,
+                placeholderValue: "Type to search statement types…",
+                shouldSort: false,
+            });
+
+            if (existing.length) {
+                choices.setChoiceByValue(existing);
+            }
+
+            select.addEventListener("change", function () {
+                const selected = Array.from(select.selectedOptions)
+                    .map(o => o.value);
+                original.value = selected.join(",");
+            });
+        }
+
+        initRelTypeField(
+            "upstream_relationship_types",
+            "upstream_relationship_types"
+        );
+        initRelTypeField(
+            "downstream_relationship_types",
+            "downstream_relationship_types"
+        );
+    });
+    </script>
 {% endblock %}

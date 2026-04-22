@@ -12,7 +12,6 @@ from wtforms.validators import DataRequired
 import io
 import json
 
-
 from indra_cogex.analysis.gene_analysis import (
     discrete_analysis,
     signed_analysis,
@@ -44,6 +43,14 @@ from .fields import (
     source_field,
     species_field, parse_text_field,
 )
+
+from indra.statements import Statement
+from indra.statements.statements import get_all_descendants
+
+INDRA_STATEMENT_TYPES = sorted([
+    s.__name__ for s in get_all_descendants(Statement)
+    if hasattr(s, '__name__')
+])
 
 __all__ = ["gene_blueprint"]
 
@@ -199,6 +206,20 @@ class IntermediatePathwayForm(FlaskForm):
                     "in the upstream file.",
         validators=[DataRequired()],
     )
+    upstream_metric_min = StringField(
+        "Upstream Metric Min (Optional)",
+        description="Lower bound of the upstream metric range after taking absolute value. " 
+                   "Must be provided together with max.",
+    )
+    upstream_metric_max = StringField(
+        "Upstream Metric Max (Optional)",
+        description="Upper bound of the upstream metric range after taking absolute value. "
+                    "Must be provided together with min.",
+    )
+    upstream_smaller_is_stronger = BooleanField(
+        "Invert metric (upstream)",
+        description="Check if lower metric values indicate stronger effect.",
+    )
     downstream_gene_col = StringField(
         "Gene Name Column",
         description="The name of the column containing gene names (HGNC symbols) "
@@ -210,6 +231,20 @@ class IntermediatePathwayForm(FlaskForm):
         description="The name of the column containing the ranking metric values "
                     "in the downstream file.",
         validators=[DataRequired()],
+    )
+    downstream_metric_min = StringField(
+        "Downstream Metric Min (Optional)",
+        description="Lower bound of the downstream metric range after taking "
+                    "absolute value. Must be provided together with max.",
+    )
+    downstream_metric_max = StringField(
+        "Downstream Metric Max (Optional)",
+        description="Upper bound of the downstream metric range after taking "
+                    "absolute value. Must be provided together with min.",
+    )
+    downstream_smaller_is_stronger = BooleanField(
+        "Invert metric (downstream)",
+        description="Check if lower metric values indicate stronger effect.",
     )
     upstream_relationship_types = StringField(
         "Upstream Relationship Types (Optional)",
@@ -469,6 +504,18 @@ def kinase_analysis_route():
         ]),
     )
 
+@gene_blueprint.route("/intermediate/examples/<filename>")
+def intermediate_example_file(filename):
+    """Serve example files for the intermediate pathway analysis form."""
+    allowed = {"AZD5363_upstream.csv", "AZD5363_downstream.csv"}
+    if filename not in allowed:
+        flask.abort(HTTPStatus.NOT_FOUND)
+    return flask.send_from_directory(
+        flask.current_app.static_folder + "/examples",
+        filename,
+        as_attachment=True,
+    )
+
 @gene_blueprint.route("/intermediate", methods=["GET", "POST"])
 def intermediate_pathway_analysis_route():
     """Render the intermediate pathway analysis form and handle form submission.
@@ -482,17 +529,53 @@ def intermediate_pathway_analysis_route():
     if form.validate_on_submit():
         upstream_file = form.upstream_file.data
         upstream_sep = "," if upstream_file.filename.endswith(".csv") else "\t"
-        upstream_df = pd.read_csv(
-            io.StringIO(upstream_file.read().decode("utf-8")),
-            sep=upstream_sep,
-        )
+        try:
+            upstream_df = pd.read_csv(
+                io.StringIO(upstream_file.read().decode("utf-8")),
+                sep=upstream_sep,
+            )
+        except Exception as e:
+            flask.flash(f"Could not parse upstream file: {str(e)}")
+            return flask.render_template(
+                "gene_analysis/intermediate_form.html",
+                form=form,
+            )
 
         downstream_file = form.downstream_file.data
         downstream_sep = "," if downstream_file.filename.endswith(".csv") else "\t"
-        downstream_df = pd.read_csv(
-            io.StringIO(downstream_file.read().decode("utf-8")),
-            sep=downstream_sep,
-        )
+        try:
+            downstream_df = pd.read_csv(
+                io.StringIO(downstream_file.read().decode("utf-8")),
+                sep=downstream_sep,
+            )
+        except Exception as e:
+            flask.flash(f"Could not parse downstream file: {str(e)}")
+            return flask.render_template(
+                "gene_analysis/intermediate_form.html",
+                form=form,
+            )
+
+        if form.upstream_gene_col.data not in upstream_df.columns or \
+           form.upstream_metric_col.data not in upstream_df.columns:
+            flask.flash(
+                f"Upstream file does not contain the specified columns. "
+                f"Found: {', '.join(upstream_df.columns.tolist())}"
+            )
+            return flask.render_template(
+                "gene_analysis/intermediate_form.html",
+                form=form,
+            )
+        
+        if form.downstream_gene_col.data not in downstream_df.columns or \
+           form.downstream_metric_col.data not in downstream_df.columns:
+            flask.flash(
+                f"Downstream file does not contain the specified columns. "
+                f"Found: {', '.join(downstream_df.columns.tolist())}"
+            )
+            return flask.render_template(
+                "gene_analysis/intermediate_form.html",
+                form=form,
+            )
 
         upstream_relationship_types = None
         if form.upstream_relationship_types.data:
@@ -510,22 +593,105 @@ def intermediate_pathway_analysis_route():
                 if r.strip()
             ]
 
-        results = intermediate_pathway_analysis(
-            client=client,
-            upstream_df=upstream_df,
-            downstream_df=downstream_df,
-            upstream_gene_col=form.upstream_gene_col.data,
-            upstream_metric_col=form.upstream_metric_col.data,
-            downstream_gene_col=form.downstream_gene_col.data,
-            downstream_metric_col=form.downstream_metric_col.data,
-            upstream_relationship_types=upstream_relationship_types,
-            downstream_relationship_types=downstream_relationship_types,
-            minimum_evidence_count=form.minimum_evidence.data,
-            minimum_belief=form.minimum_belief.data,
-            method=form.correction.data,
-            alpha=form.alpha.data,
-            keep_insignificant=form.keep_insignificant.data,
-        )
+        def _parse_optional_float(value: str):
+            try:
+                return float(value) if value and value.strip() else None
+            except ValueError:
+                return None
+
+        upstream_metric_min = _parse_optional_float(form.upstream_metric_min.data)
+        upstream_metric_max = _parse_optional_float(form.upstream_metric_max.data)
+        downstream_metric_min = _parse_optional_float(form.downstream_metric_min.data)
+        downstream_metric_max = _parse_optional_float(form.downstream_metric_max.data)
+
+        if upstream_metric_min is not None and upstream_metric_max is not None:
+            if upstream_metric_min >= upstream_metric_max:
+                flask.flash("Upstream metric min must be strictly less than max.")
+                return flask.render_template(
+                    "gene_analysis/intermediate_form.html",
+                    form=form,
+                )
+
+        if downstream_metric_min is not None and downstream_metric_max is not None:
+            if downstream_metric_min >= downstream_metric_max:
+                flask.flash("Downstream metric min must be strictly less than max.")
+                return flask.render_template(
+                "gene_analysis/intermediate_form.html",
+                form=form,
+            )
+            
+        if (upstream_metric_min is None) != (upstream_metric_max is None):
+            flask.flash("Upstream metric min and max must both be provided or both left empty.")
+            return flask.render_template(
+                "gene_analysis/intermediate_form.html",
+                form=form,
+            )
+        if (downstream_metric_min is None) != (downstream_metric_max is None):
+            flask.flash("Downstream metric min and max must both be provided or both left empty.")
+            return flask.render_template(
+                "gene_analysis/intermediate_form.html",
+                form=form,
+            )
+
+        try:
+            results = intermediate_pathway_analysis(
+                client=client,
+                upstream_df=upstream_df,
+                downstream_df=downstream_df,
+                upstream_gene_col=form.upstream_gene_col.data,
+                upstream_metric_col=form.upstream_metric_col.data,
+                downstream_gene_col=form.downstream_gene_col.data,
+                downstream_metric_col=form.downstream_metric_col.data,
+                upstream_metric_min=upstream_metric_min,
+                upstream_metric_max=upstream_metric_max,
+                upstream_smaller_is_stronger=form.upstream_smaller_is_stronger.data,
+                downstream_metric_min=downstream_metric_min,
+                downstream_metric_max=downstream_metric_max,
+                downstream_smaller_is_stronger=form.downstream_smaller_is_stronger.data,
+                upstream_relationship_types=upstream_relationship_types,
+                downstream_relationship_types=downstream_relationship_types,
+                minimum_evidence_count=form.minimum_evidence.data,
+                minimum_belief=form.minimum_belief.data,
+                method=form.correction.data,
+                alpha=form.alpha.data,
+                keep_insignificant=form.keep_insignificant.data,
+            )
+        except (ValueError, KeyError) as e:
+            import traceback
+            flask.flash(
+                f"Error during analysis: {str(e)}. "
+                f"Traceback: {traceback.format_exc()}"
+            )
+            return flask.render_template(
+                "gene_analysis/intermediate_form.html",
+                form=form,
+            )
+
+        if results["intermediates"].empty:
+            flask.flash(
+                "No enriched intermediates were found. Try relaxing the significance "
+                "threshold (alpha), reducing minimum evidence count, or using broader "
+                "relationship types."
+            )
+            return flask.render_template(
+                "gene_analysis/intermediate_form.html",
+                form=form,
+            )
+
+        if results["pathways"].empty:
+            flask.flash(
+                "Enriched intermediates were found but no three-step paths could be "
+                "assembled. This can happen if the relationship type filters are too "
+                "strict, or if the upstream and downstream gene sets have no documented "
+                "connections through the enriched intermediates."
+            )
+            return flask.render_template(
+                "gene_analysis/intermediate_form.html",
+                form=form,
+            )
+
+        TOP_N_INTERMEDIATES = 10
+        TOP_N_PATHWAYS = 100
 
         network_data = build_network_visjs(
             results["pathways"],
@@ -533,7 +699,35 @@ def intermediate_pathway_analysis_route():
             intermediates_df=results["intermediates"],
             upstream_scores=results["upstream_scores"],
             downstream_scores=results["downstream_scores"],
+            top_n_intermediates=TOP_N_INTERMEDIATES,
+            top_n_pathways=TOP_N_PATHWAYS,
         )
+
+        n_intermediates_shown = min(TOP_N_INTERMEDIATES, len(results["intermediates"]))
+
+        intermediate_connections = {}
+        if not results["pathways"].empty:
+            for intermediate, group in results["pathways"].groupby("intermediate"):
+                intermediate_connections[intermediate] = {
+                    "upstream": (
+                        group[["upstream_gene", "upstream_score"]]
+                        .drop_duplicates()
+                        .sort_values("upstream_score", ascending=False)
+                        .head(10)
+                        .rename(columns={"upstream_gene": "gene", "upstream_score": "score"})
+                        .assign(score=lambda x: x["score"].round(3))
+                        .to_dict("records")
+                    ),
+                    "downstream": (
+                        group[["downstream_gene", "downstream_score"]]
+                        .drop_duplicates()
+                        .sort_values("downstream_score", ascending=False)
+                        .head(10)
+                        .rename(columns={"downstream_gene": "gene", "downstream_score": "score"})
+                        .assign(score=lambda x: x["score"].round(3))
+                        .to_dict("records")
+                    ),
+                }
 
         return flask.render_template(
             "gene_analysis/intermediate_results.html",
@@ -544,9 +738,13 @@ def intermediate_pathway_analysis_route():
             method=form.correction.data,
             minimum_evidence=form.minimum_evidence.data,
             minimum_belief=form.minimum_belief.data,
+            n_intermediates_shown=n_intermediates_shown,
+            intermediate_connections=json.dumps(intermediate_connections),
         )
     
     return flask.render_template(
         "gene_analysis/intermediate_form.html",
         form=form,
+        stmt_types_json=json.dumps(INDRA_STATEMENT_TYPES),
     )
+
