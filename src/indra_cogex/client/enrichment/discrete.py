@@ -60,6 +60,60 @@ GENE_TYPES = {
     'phosphatase': is_phosphatase,
 }
 
+FPLX_BLOCKLIST = {
+    # Size 0
+    "fplx:IKB", "fplx:GAP", "fplx:GTPase", "fplx:ETC_complex_V",
+    "fplx:E3_Ub_ligase", "fplx:Pertussis_toxin", "fplx:Phosphatase",
+    "fplx:Protease", "fplx:RasGAP", "fplx:RTK", "fplx:TNF",
+    "fplx:Ubiquitin", "fplx:GEF",
+    # Size > 10
+    "fplx:Neuropeptide_receptor", "fplx:ACAD", "fplx:OR7",
+    "fplx:Desumoylase", "fplx:PLC", "fplx:DYNC1", "fplx:DYNC2",
+    "fplx:NADPH_oxidase", "fplx:RSTK", "fplx:P2RY", "fplx:RBR_E3_ligase",
+    "fplx:G_gamma", "fplx:CYP4", "fplx:JAMM", "fplx:Caspase",
+    "fplx:PPP2R_B", "fplx:IFNA", "fplx:MYL", "fplx:SLC2A",
+    "fplx:SERPINB", "fplx:SCN", "fplx:OR13", "fplx:RNApo_II",
+    "fplx:FUT", "fplx:Microtubule_associated_proteins", "fplx:AQP",
+    "fplx:Ephrin_receptor", "fplx:ETC_complex_I_core",
+    "fplx:Adenosine_deaminase_family", "fplx:PRC1_complex",
+    "fplx:Axonemal_dynein_ODA", "fplx:APC_C", "fplx:CAPN",
+    "fplx:Chloride_calcium_activated_channels", "fplx:Chemokine",
+    "fplx:Cathepsin", "fplx:MYH", "fplx:CYP_epoxygenases",
+    "fplx:Histone_H2A", "fplx:Protocadherin_alpha", "fplx:KCNK",
+    "fplx:HTR", "fplx:Cytoplasmic_dynein", "fplx:SWI_SNF",
+    "fplx:Interferon", "fplx:KCNJ", "fplx:G_protein", "fplx:CHRN",
+    "fplx:KLK", "fplx:PLA2", "fplx:G_alpha", "fplx:FABP",
+    "fplx:DGC", "fplx:PARP", "fplx:HSPA", "fplx:Axonemal_dynein_IDA",
+    "fplx:Protocadherin_beta", "fplx:BMP", "fplx:SLRP", "fplx:Porins",
+    "fplx:CYP2", "fplx:PPP2", "fplx:Cyclophilin", "fplx:OTU",
+    "fplx:Kinetochore", "fplx:HDAC", "fplx:GST", "fplx:GRI",
+    "fplx:Histone_H2B", "fplx:S100A", "fplx:TRMT", "fplx:ITGA",
+    "fplx:GPCR", "fplx:GABR", "fplx:GPCR_C", "fplx:Wnt",
+    "fplx:Metallothionein", "fplx:COX", "fplx:P2R", "fplx:PDE",
+    "fplx:ATP_synthase", "fplx:TNFRSF", "fplx:Actin_related_proteins",
+    "fplx:GALNT", "fplx:FANC", "fplx:GTF_family_29", "fplx:Tubulin",
+    "fplx:GJ", "fplx:Cadherin", "fplx:FGF", "fplx:Chemokine_receptor",
+    "fplx:S100", "fplx:Purinergic_receptors", "fplx:Sodium_channels",
+    "fplx:MMP", "fplx:Adaptor_protein", "fplx:OR51", "fplx:MAP3K",
+    "fplx:OR8", "fplx:CACN", "fplx:CDK", "fplx:PPP1R",
+    "fplx:Integrins", "fplx:SCAR", "fplx:OR52", "fplx:TRP",
+    "fplx:Cyclin", "fplx:HECT_E3_ligase", "fplx:Axonemal_dynein",
+    "fplx:UBE2", "fplx:OR6", "fplx:MRPS", "fplx:ETC_complex_I_supernumerary",
+    "fplx:PPP1", "fplx:OR1", "fplx:ARF_GTPase_family", "fplx:UGT",
+    "fplx:MED", "fplx:KMT", "fplx:Chloride_channels", "fplx:Dynein",
+    "fplx:Beta_3_4_GTF", "fplx:OR10", "fplx:Potassium_voltage_gated_channels",
+    "fplx:Myosin_family", "fplx:Calcium_channels", "fplx:Collagen",
+    "fplx:CCL", "fplx:Kinesin", "fplx:Proteasome", "fplx:ETC_complex_I",
+    "fplx:Histone", "fplx:MRPL", "fplx:Mechanosensitive_ion_channels",
+    "fplx:FOX", "fplx:Growth_factor", "fplx:OR5", "fplx:Myosin_complex",
+    "fplx:OR4", "fplx:USP", "fplx:CYP", "fplx:Methyltransferases",
+    "fplx:RAB", "fplx:OR2", "fplx:Neuropeptides",
+    "fplx:Ligand_gated_ion_channels", "fplx:Mitochondrial_Ribosome",
+    "fplx:KCN", "fplx:CLEC", "fplx:Deubiquitinase", "fplx:Cation_channels",
+    "fplx:Voltage_gated_ion_channels", "fplx:Glycosyltransferase",
+    "fplx:RING_E3_ligase", "fplx:OR",
+}
+
 def parse_gene_list(gene_list: List[str]) -> Tuple[dict[str, str], List[str]]:
     """Parse a list of gene symbols or HGNC identifiers into HGNC IDs.
 
@@ -598,12 +652,14 @@ def indra_intermediate_ora(
     )
 
     down_analysis = down_analysis[
-        down_analysis["curie"].str.startswith("hgnc:") |
-        down_analysis["curie"].str.startswith("fplx:")
+        (down_analysis["curie"].str.startswith("hgnc:") |
+        down_analysis["curie"].str.startswith("fplx:")) &
+        ~down_analysis["curie"].isin(FPLX_BLOCKLIST)
     ]
     up_analysis = up_analysis[
-        up_analysis["curie"].str.startswith("hgnc:") |
-        up_analysis["curie"].str.startswith("fplx:")
+        (up_analysis["curie"].str.startswith("hgnc:") |
+        up_analysis["curie"].str.startswith("fplx:")) &
+        ~up_analysis["curie"].isin(FPLX_BLOCKLIST)
     ]
 
     merged = down_analysis[["curie", "name", "p", "mlp"]].merge(
