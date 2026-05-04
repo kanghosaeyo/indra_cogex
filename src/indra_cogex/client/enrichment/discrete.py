@@ -597,8 +597,14 @@ def indra_intermediate_ora(
         keep_insignificant=True,
     )
 
-    down_analysis = down_analysis[down_analysis["curie"].str.startswith("hgnc:")]
-    up_analysis = up_analysis[up_analysis["curie"].str.startswith("hgnc:")]
+    down_analysis = down_analysis[
+        down_analysis["curie"].str.startswith("hgnc:") |
+        down_analysis["curie"].str.startswith("fplx:")
+    ]
+    up_analysis = up_analysis[
+        up_analysis["curie"].str.startswith("hgnc:") |
+        up_analysis["curie"].str.startswith("fplx:")
+    ]
 
     merged = down_analysis[["curie", "name", "p", "mlp"]].merge(
         up_analysis[["curie", "name", "p", "mlp"]],

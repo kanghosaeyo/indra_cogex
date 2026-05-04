@@ -167,14 +167,14 @@
                             <table class="table table-sm">
                                 <tr><td><b>Type</b></td><td>Upstream</td></tr>
                                 <tr><td><b>Metric score</b></td><td>${d.metric_score.toFixed(3)}</td></tr>
-                                <tr><td><b>HGNC</b></td><td><a href="${d.hgnc_url}" target="_blank">Gene page ↗</a></td></tr>
+                                <tr><td><b>HGNC</b></td><td><a href="${d.hgnc_url ? `<tr><td><b>${d.curie && d.curie.startsWith("fplx:") ? "FamPlex" : "HGNC"}</b></td><td><a href="${d.hgnc_url}" target="_blank">Gene page ↗</a></td></tr>` : ""}
                             </table>`;
                     } else {
                         html = `
                             <table class="table table-sm">
                                 <tr><td><b>Type</b></td><td>Downstream</td></tr>
                                 <tr><td><b>Metric score</b></td><td>${d.metric_score.toFixed(3)}</td></tr>
-                                <tr><td><b>HGNC</b></td><td><a href="${d.hgnc_url}" target="_blank">Gene page ↗</a></td></tr>
+                                <tr><td><b>HGNC</b></td><td><a href="${d.hgnc_url ? `<tr><td><b>${d.curie && d.curie.startsWith("fplx:") ? "FamPlex" : "HGNC"}</b></td><td><a href="${d.hgnc_url}" target="_blank">Gene page ↗</a></td></tr>` : ""}
                             </table>`;
                     }
                     showDetails(nodeId, html);

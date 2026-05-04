@@ -1,37 +1,7 @@
 {% extends "base_form.html" %}
+{% import "bootstrap4/form.html" as wtf %}
 
 {% block title %}Intermediate Pathway Analysis{% endblock %}
-
-{% block header %}Intermediate Pathway Analysis{% endblock %}
-
-{% block lead %}
-    This application reconstructs three-step causal pathways connecting two
-    gene sets through statistically enriched intermediate regulators, using
-    <a href="https://github.com/gyorilab/indra_cogex" target="_blank">INDRA CoGEx</a>,
-    an automatically assembled biomedical knowledge graph. Given an upstream gene set
-    and a downstream gene set, the application identifies intermediate regulators
-    statistically enriched in both directions, assembles three-step paths
-    (<code>upstream gene → intermediate → downstream gene</code>), and scores them
-    by a normalized product of enrichment strength and effect sizes from both datasets.
-    <br><br>
-    Upload two files containing your upstream and downstream gene sets. Each file must
-    contain a column with gene symbols and a column with a ranking metric. Metric values 
-    will be scaled to [0, 1] so that upstream and downstream scores are comparable regardless 
-    of their original units.
-    <br><br>
-    <strong>Example dataset:</strong> 
-    <br>
-    AZD5363 (capivasertib, pan-AKT inhibitor)
-    <br>
-    <a href="{{ url_for('gla.intermediate_example_file', filename='AZD5363_upstream.csv') }}">
-        download upstream file</a>
-    (gene column: <code>Target</code>, metric column: <code>EC50 [nM]</code>,
-    invert metric: ✓)
-    <br>
-    <a href="{{ url_for('gla.intermediate_example_file', filename='AZD5363_downstream.csv') }}">
-        download downstream file</a>
-    (gene column: <code>Gene names</code>, metric column: <code>Mean log2FC</code>)
-{% endblock %}
 
 {% block head %}
     {{ super() }}
@@ -51,11 +21,10 @@
             document.getElementById("stmt-types-json").textContent
         );
 
-        function initRelTypeField(fieldId, hiddenId) {
+        function initRelTypeField(fieldId) {
             const original = document.getElementById(fieldId);
             if (!original) return;
 
-            // Build a <select multiple> to replace the text input
             const select = document.createElement("select");
             select.multiple = true;
             select.id = fieldId + "_choices";
@@ -69,7 +38,7 @@
 
             original.parentNode.insertBefore(select, original);
             original.style.display = "none";
-            
+
             const existing = original.value
                 ? original.value.split(",").map(s => s.trim()).filter(Boolean)
                 : [];
@@ -87,20 +56,118 @@
             }
 
             select.addEventListener("change", function () {
-                const selected = Array.from(select.selectedOptions)
-                    .map(o => o.value);
-                original.value = selected.join(",");
+                const selected = choices.getValue(true);
+                original.value = Array.isArray(selected)
+                    ? selected.join(",")
+                    : selected || "";
             });
         }
 
-        initRelTypeField(
-            "upstream_relationship_types",
-            "upstream_relationship_types"
-        );
-        initRelTypeField(
-            "downstream_relationship_types",
-            "downstream_relationship_types"
-        );
+        initRelTypeField("upstream_relationship_types");
+        initRelTypeField("downstream_relationship_types");
     });
     </script>
+{% endblock %}
+
+{% block container %}
+<div class="card card-body bg-light">
+    <h1 class="display-4">Intermediate Pathway Analysis</h1>
+    <p class="lead">
+        This application reconstructs three-step causal pathways connecting two
+        gene sets through statistically enriched intermediate regulators, using
+        <a href="https://github.com/gyorilab/indra_cogex" target="_blank">INDRA CoGEx</a>,
+        an automatically assembled biomedical knowledge graph. Given an upstream gene set
+        and a downstream gene set, the application identifies intermediate regulators
+        statistically enriched in both directions, assembles three-step paths
+        (<code>upstream gene → intermediate → downstream gene</code>), and scores them
+        by a normalized product of enrichment strength and effect sizes from both datasets.
+        <br><br>
+        Upload two files containing your upstream and downstream gene sets. Each file must
+        contain a column with gene symbols and a column with a ranking metric. Metric values
+        will be scaled to [0, 1] so that upstream and downstream scores are comparable regardless
+        of their original units.
+        <br><br>
+        <strong>Example dataset:</strong>
+        <br>
+        AZD5363 (capivasertib, pan-AKT inhibitor)
+        <br>
+        <a href="{{ url_for('gla.intermediate_example_file', filename='AZD5363_upstream.csv') }}">
+            download upstream file</a>
+        (gene column: <code>gene</code>, metric column: <code>EC50</code>,
+        invert metric: ✓)
+        <br>
+        <a href="{{ url_for('gla.intermediate_example_file', filename='AZD5363_downstream.csv') }}">
+            download downstream file</a>
+        (gene column: <code>gene</code>, metric column: <code>log2FC</code>).
+    </p>
+
+    <form method="POST" enctype="multipart/form-data" id="main-form">
+        {{ form.hidden_tag() }}
+
+        {# ── Upstream ──────────────────────────────────────────────────────── #}
+        <h4 class="mt-3 mb-2 border-bottom pb-1">Upstream Gene Set</h4>
+
+        {{ wtf.render_field(form.upstream_file) }}
+
+        <div class="form-row">
+            <div class="col-md-6">
+                {{ wtf.render_field(form.upstream_gene_col) }}
+            </div>
+            <div class="col-md-6">
+                {{ wtf.render_field(form.upstream_metric_col) }}
+            </div>
+        </div>
+
+        <div class="form-row">
+            <div class="col-md-6">
+                {{ wtf.render_field(form.upstream_metric_min) }}
+            </div>
+            <div class="col-md-6">
+                {{ wtf.render_field(form.upstream_metric_max) }}
+            </div>
+        </div>
+
+        {{ wtf.render_field(form.upstream_smaller_is_stronger) }}
+
+        {{ wtf.render_field(form.upstream_relationship_types) }}
+
+        {# ── Downstream ────────────────────────────────────────────────────── #}
+        <h4 class="mt-4 mb-2 border-bottom pb-1">Downstream Gene Set</h4>
+
+        {{ wtf.render_field(form.downstream_file) }}
+
+        <div class="form-row">
+            <div class="col-md-6">
+                {{ wtf.render_field(form.downstream_gene_col) }}
+            </div>
+            <div class="col-md-6">
+                {{ wtf.render_field(form.downstream_metric_col) }}
+            </div>
+        </div>
+
+        <div class="form-row">
+            <div class="col-md-6">
+                {{ wtf.render_field(form.downstream_metric_min) }}
+            </div>
+            <div class="col-md-6">
+                {{ wtf.render_field(form.downstream_metric_max) }}
+            </div>
+        </div>
+
+        {{ wtf.render_field(form.downstream_smaller_is_stronger) }}
+
+        {{ wtf.render_field(form.downstream_relationship_types) }}
+
+        {# ── Analysis Parameters ───────────────────────────────────────────── #}
+        <h4 class="mt-4 mb-2 border-bottom pb-1">Analysis Parameters</h4>
+
+        {{ wtf.render_field(form.alpha) }}
+        {{ wtf.render_field(form.correction) }}
+        {{ wtf.render_field(form.minimum_evidence) }}
+        {{ wtf.render_field(form.minimum_belief) }}
+        {{ wtf.render_field(form.keep_insignificant) }}
+        {{ wtf.render_field(form.submit) }}
+
+    </form>
+</div>
 {% endblock %}

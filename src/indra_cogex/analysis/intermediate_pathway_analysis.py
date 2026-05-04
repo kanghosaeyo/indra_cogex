@@ -298,16 +298,21 @@ def build_network_visjs(
         if node in intermediates:
             shape, size = "ellipse", 45
             row = intermediates_lookup.get(node, {})
+            curie = row["curie"] if "curie" in row else ""
             norm_score = intermediate_scores_norm.get(node, 0.0)
             color = _score_to_hex(norm_score, (255, 140, 0))
             details = {
                 "type": "Intermediate",
-                "curie": row["curie"] if "curie" in row else None,
+                "curie": curie or None,
                 "p_combined": float(row["p_combined"]) if "p_combined" in row else None,
                 "q_combined": float(row["q_combined"]) if "q_combined" in row else None,
                 "p_down": float(row["p_down"]) if "p_down" in row else None,
                 "p_up": float(row["p_up"]) if "p_up" in row else None,
-                "hgnc_url": f"https://www.genenames.org/tools/search/#!/?query={node}"
+                "hgnc_url": (
+                    f"https://bioregistry.io/{curie}"
+                    if curie.startswith("fplx:")
+                    else f"https://www.genenames.org/tools/search/#!/?query={node}"
+                ),
             }
             title = f"{node} (Intermediate)"
         elif node in upstream_genes:
@@ -325,7 +330,11 @@ def build_network_visjs(
             details = {
                 "type": "Downstream",
                 "metric_score": float(downstream_scores.get(node, 0.0)),
-                "hgnc_url": f"https://www.genenames.org/tools/search/#!/?query={node}"
+                "hgnc_url": (
+                    f"https://bioregistry.io/{row['curie']}"
+                    if "curie" in row and row["curie"] and str(row["curie"]).startswith("fplx:")
+                    else f"https://www.genenames.org/tools/search/#!/?query={node}"
+                ),
             }
             title = f"{node} (Downstream)"
 
@@ -344,6 +353,7 @@ def build_network_visjs(
     for name in top_intermediates:
         if name not in {n["id"] for n in nodes}:
             row = intermediates_lookup.get(name, {})
+            curie = row["curie"] if "curie" in row else ""
             norm_score = intermediate_scores_norm.get(name, 0.0)
             color = _score_to_hex(norm_score, (255, 140, 0))
             nodes.append({
@@ -357,12 +367,16 @@ def build_network_visjs(
                 "borderWidth": 2,
                 "details": {
                     "type": "Intermediate",
-                    "curie": row["curie"] if "curie" in row else None,
+                    "curie": curie or None,
                     "p_combined": float(row["p_combined"]) if "p_combined" in row else None,
                     "q_combined": float(row["q_combined"]) if "q_combined" in row else None,
                     "p_down": float(row["p_down"]) if "p_down" in row else None,
                     "p_up": float(row["p_up"]) if "p_up" in row else None,
-                    "hgnc_url": f"https://www.genenames.org/tools/search/#!/?query={name}",
+                    "hgnc_url": (
+                        f"https://bioregistry.io/{curie}"
+                        if curie.startswith("fplx:")
+                        else f"https://www.genenames.org/tools/search/#!/?query={node}"
+                    ),
                 },
             })
 

@@ -199,12 +199,14 @@ class IntermediatePathwayForm(FlaskForm):
         description="The name of the column containing gene names (HGNC symbols) "
                     "in the upstream file.",
         validators=[DataRequired()],
+        default="gene"
     )
     upstream_metric_col = StringField(
         "Ranking Metric Column",
         description="The name of the column containing the ranking metric values "
                     "in the upstream file.",
         validators=[DataRequired()],
+        default="EC50"
     )
     upstream_metric_min = StringField(
         "Upstream Metric Min (Optional)",
@@ -219,18 +221,21 @@ class IntermediatePathwayForm(FlaskForm):
     upstream_smaller_is_stronger = BooleanField(
         "Invert metric (upstream)",
         description="Check if lower metric values indicate stronger effect.",
+        default=True,
     )
     downstream_gene_col = StringField(
         "Gene Name Column",
         description="The name of the column containing gene names (HGNC symbols) "
                     "in the downstream file.",
         validators=[DataRequired()],
+        default="gene"
     )
     downstream_metric_col = StringField(
         "Ranking Metric Column",
         description="The name of the column containing the ranking metric values "
                     "in the downstream file.",
         validators=[DataRequired()],
+        default="log2FC"
     )
     downstream_metric_min = StringField(
         "Downstream Metric Min (Optional)",
