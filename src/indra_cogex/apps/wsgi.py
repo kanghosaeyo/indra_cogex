@@ -73,7 +73,7 @@ app.register_blueprint(source_target_blueprint)
 api.init_app(app)
 
 app.extensions[INDRA_COGEX_EXTENSION] = Neo4jClient()
-app.extensions[STATEMENT_CURATION_CACHE] = CurationCache()
+#app.extensions[STATEMENT_CURATION_CACHE] = CurationCache()
 
 config_auth(app)
 

@@ -183,6 +183,25 @@
             </div>
         </div>
 
+        <div class="card-deck" style="margin-bottom: 1em !important;">
+            <div class="card">
+                <div class="d-flex justify-content-center align-items-center" style="height: 120px; padding: 10px;">
+                    <img style="max-height: 100px; max-width: 100%; object-fit: contain;"
+                         src="{{ url_for('static', filename='intermediate.png') }}"
+                         alt="Intermediate Pathway Analysis">
+                </div>
+                <div class="card-body">
+                    <h5 class="card-title">Intermediate Pathway Analysis</h5>
+                    <p class="card-text">
+                        Reconstruct three-step causal pathways connecting two scored gene sets through
+                        statistically enriched intermediate regulators using INDRA CoGEx.
+                    </p>
+                </div>
+                {{ start_button('gla.intermediate_pathway_analysis_route', '/gene/intermediate') }}
+            </div>
+            <div class="card" style="visibility: hidden;"></div>
+            <div class="card" style="visibility: hidden;"></div>
+        </div>
 
         <!-- Directed Exploration Section with consistent spacing -->
         <h3 class="text-center">Directed Exploration</h3>
