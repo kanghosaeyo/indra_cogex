@@ -946,7 +946,7 @@ def get_entity_to_targets_raw(
         pointing to the maximum belief and evidence count associated with the
         given HGNC gene.
     """
-    if relationship_types is not None or entities is not None:
+    if relationship_types is not None:
         use_sqlite_cache = False
     
     if sqlite_db_path.exists() and use_sqlite_cache:
@@ -956,6 +956,11 @@ def get_entity_to_targets_raw(
             sqlite_db_path=sqlite_db_path,
             limit=limit
         )
+        if entities is not None:
+            genes_with_confidence = {
+                k: v for k, v in genes_with_confidence.items()
+                if k[0] in entities
+            }
     else:
         rel_type_clause = (
             "AND r.stmt_type IN $rel_types"
@@ -977,7 +982,6 @@ def get_entity_to_targets_raw(
                 {rel_type_clause}
                 {entity_clause}
                 AND NOT regulator.id STARTS WITH "uniprot"  // This is a simple way to ignore non-human proteins
-                AND (regulator.id STARTS WITH "hgnc" OR regulator.id STARTS WITH "fplx")
             RETURN
                 regulator.id,
                 regulator.name,
@@ -1087,7 +1091,7 @@ def get_entity_to_regulators_raw(
         given HGNC gene.
     """
 
-    if relationship_types is not None or entities is not None:
+    if relationship_types is not None:
         use_sqlite_cache = False
     
     if sqlite_db_path.exists() and use_sqlite_cache:
@@ -1097,6 +1101,11 @@ def get_entity_to_regulators_raw(
             sqlite_db_path=sqlite_db_path,
             limit=limit
         )
+        if entities is not None:
+            genes_with_confidence = {
+                k: v for k, v in genes_with_confidence.items()
+                if k[0] in entities
+            }
     else:
         rel_type_clause = (
             "AND r.stmt_type IN $rel_types"
@@ -1118,7 +1127,6 @@ def get_entity_to_regulators_raw(
                 {rel_type_clause}
                 {entity_clause}
                 AND NOT target.id STARTS WITH "uniprot"  // This is a simple way to ignore non-human proteins
-                AND (target.id STARTS WITH "hgnc" OR target.id STARTS WITH "fplx")
             RETURN
                 target.id,
                 target.name,

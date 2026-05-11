@@ -6,6 +6,7 @@ from typing import Collection, Dict, List, Optional, Tuple
 import networkx as nx
 import numpy as np
 import pandas as pd
+import time
 from sklearn.preprocessing import MinMaxScaler
 
 from indra_cogex.client.enrichment.discrete import indra_intermediate_ora
@@ -514,6 +515,7 @@ def intermediate_pathway_analysis(
         smaller_is_stronger=downstream_smaller_is_stronger,
     )
 
+    t0 = time.time()
     intermediates_df = indra_intermediate_ora(
         client=client,
         upstream_gene_ids=upstream_genes,
@@ -527,6 +529,7 @@ def intermediate_pathway_analysis(
         upstream_relationship_types=upstream_relationship_types,
         downstream_relationship_types=downstream_relationship_types,
     )
+    print(f"[PROFILE] indra_intermediate_ora: {time.time() - t0:.2f}s")
 
     if intermediates_df.empty:
         return {
@@ -539,6 +542,7 @@ def intermediate_pathway_analysis(
     
     intermediate_curies = intermediates_df["curie"].tolist()
     
+    t0 = time.time()
     entity_to_regulators = get_entity_to_regulators(
         client=client,
         minimum_evidence_count=minimum_evidence_count,
@@ -546,7 +550,9 @@ def intermediate_pathway_analysis(
         relationship_types=upstream_relationship_types,
         entities=intermediate_curies,
     )
+    print(f"[PROFILE] get_entity_to_regulators: {time.time() - t0:.2f}s")
 
+    t0 = time.time()
     entity_to_targets = get_entity_to_targets(
         client=client,
         minimum_evidence_count=minimum_evidence_count,
@@ -554,7 +560,9 @@ def intermediate_pathway_analysis(
         relationship_types=downstream_relationship_types,
         entities=intermediate_curies,
     )
+    print(f"[PROFILE] get_entity_to_targets: {time.time() - t0:.2f}s")
 
+    t0 = time.time()
     pathways_df = assemble_pathways(
         upstream_genes=upstream_genes,
         downstream_genes=downstream_genes,
@@ -564,6 +572,7 @@ def intermediate_pathway_analysis(
         upstream_scores=upstream_scores,
         downstream_scores=downstream_scores,
     )
+    print(f"[PROFILE] assemble_pathways: {time.time() - t0:.2f}s")
 
     if pathways_df.empty:
         return {
