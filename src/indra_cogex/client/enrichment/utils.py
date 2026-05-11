@@ -139,6 +139,7 @@ def collect_genes_with_confidence(
     *,
     background_gene_ids: Optional[Iterable[str]] = None,
     rel_types: Optional[List[str]] = None,
+    entities: Optional[List[str]] = None,
     client: Neo4jClient,
 ) -> Dict[Tuple[str, str], Dict[str, Tuple[float, int]]]:
     """Collect gene sets based on the given query.
@@ -167,7 +168,7 @@ def collect_genes_with_confidence(
     curie_to_hgnc_ids = defaultdict(dict)
     max_beliefs: Dict[Tuple[str, str, str], float] = {}
     max_ev_counts: Dict[Tuple[str, str, str], int] = {}
-    query_res = client.query_tx(query, rel_types=rel_types)
+    query_res = client.query_tx(query, rel_types=rel_types, entities=entities)
     if query_res is None:
         raise RuntimeError("Query returned no results")
     for result in query_res:
@@ -865,6 +866,7 @@ def get_entity_to_targets(
     minimum_evidence_count: Optional[int] = 1,
     minimum_belief: Optional[float] = 0.0,
     relationship_types: Optional[List[str]] = None,
+    entities: Optional[List[str]] = None,
 ) -> Dict[Tuple[str, str], Set[str]]:
     """Get a mapping from each entity in the INDRA database to the set of
     human genes that it regulates.
@@ -898,6 +900,7 @@ def get_entity_to_targets(
         client=client,
         background_gene_ids=background_gene_ids,
         relationship_types=relationship_types,
+        entities=entities,
     )
     return filter_gene_set_confidences(
         genes_with_confidence,
@@ -913,6 +916,7 @@ def get_entity_to_targets_raw(
     limit: Optional[int] = None,
     relationship_types: Optional[List[str]] = None,
     sqlite_db_path: Union[Path, str] = SQLITE_CACHE_PATH,
+    entities: Optional[List[str]] = None,
 ) -> Dict[Tuple[str, str], Dict[str, Tuple[float, int]]]:
     """Get all regulator to target relationships
 
@@ -942,7 +946,7 @@ def get_entity_to_targets_raw(
         pointing to the maximum belief and evidence count associated with the
         given HGNC gene.
     """
-    if relationship_types is not None:
+    if relationship_types is not None or entities is not None:
         use_sqlite_cache = False
     
     if sqlite_db_path.exists() and use_sqlite_cache:
@@ -958,6 +962,11 @@ def get_entity_to_targets_raw(
             if relationship_types
             else ""
         )
+        entity_clause = (
+            "AND regulator.id IN $entities"
+            if entities
+            else ""
+        )
         query = dedent(
             f"""\
             MATCH (regulator:BioEntity)-[r:indra_rel]->(gene:BioEntity)
@@ -966,7 +975,9 @@ def get_entity_to_targets_raw(
                 AND NOT gene.obsolete                       // Skip obsolete
                 AND r.stmt_type <> "Complex"                // Ignore complexes since they are non-directional
                 {rel_type_clause}
+                {entity_clause}
                 AND NOT regulator.id STARTS WITH "uniprot"  // This is a simple way to ignore non-human proteins
+                AND (regulator.id STARTS WITH "hgnc" OR regulator.id STARTS WITH "fplx")
             RETURN
                 regulator.id,
                 regulator.name,
@@ -980,6 +991,7 @@ def get_entity_to_targets_raw(
             query=query,
             background_gene_ids=background_gene_ids,
             rel_types=relationship_types,
+            entities=entities,
         )
     return genes_with_confidence
 
@@ -992,6 +1004,7 @@ def get_entity_to_regulators(
     minimum_evidence_count: Optional[int] = 1,
     minimum_belief: Optional[float] = 0.0,
     relationship_types: Optional[List[str]] = None,
+    entities: Optional[List[str]] = None,
 ) -> Dict[Tuple[str, str], Set[str]]:
     """Get a mapping from each entity in the INDRA database to the set of
     human genes that are causally upstream of it.
@@ -1025,6 +1038,7 @@ def get_entity_to_regulators(
         client=client,
         background_gene_ids=background_gene_ids,
         relationship_types=relationship_types,
+        entities=entities,
     )
     return filter_gene_set_confidences(
         genes_with_confidence,
@@ -1042,6 +1056,7 @@ def get_entity_to_regulators_raw(
     limit: Optional[int] = None,
     relationship_types: Optional[List[str]] = None,
     sqlite_db_path: Union[Path, str] = SQLITE_CACHE_PATH,
+    entities: Optional[List[str]] = None,
 ) -> Dict[Tuple[str, str], Dict[str, Tuple[float, int]]]:
     """Get all target to regulator relationships
 
@@ -1072,7 +1087,7 @@ def get_entity_to_regulators_raw(
         given HGNC gene.
     """
 
-    if relationship_types is not None:
+    if relationship_types is not None or entities is not None:
         use_sqlite_cache = False
     
     if sqlite_db_path.exists() and use_sqlite_cache:
@@ -1088,6 +1103,11 @@ def get_entity_to_regulators_raw(
             if relationship_types
             else ""
         )
+        entity_clause = (
+            "AND target.id IN $entities"
+            if entities
+            else ""
+        )
         query = dedent(
             f"""\
             MATCH (gene:BioEntity)-[r:indra_rel]->(target:BioEntity)
@@ -1096,7 +1116,9 @@ def get_entity_to_regulators_raw(
                 AND NOT gene.obsolete                    // Skip obsolete
                 AND r.stmt_type <> "Complex"             // Ignore complexes since they are non-directional
                 {rel_type_clause}
+                {entity_clause}
                 AND NOT target.id STARTS WITH "uniprot"  // This is a simple way to ignore non-human proteins
+                AND (target.id STARTS WITH "hgnc" OR target.id STARTS WITH "fplx")
             RETURN
                 target.id,
                 target.name,
@@ -1110,6 +1132,7 @@ def get_entity_to_regulators_raw(
             query=query,
             background_gene_ids=background_gene_ids,
             rel_types=relationship_types,
+            entities=entities,
         )
     return genes_with_confidence
 

@@ -637,7 +637,7 @@ def intermediate_pathway_analysis_route():
                 "gene_analysis/intermediate_form.html",
                 form=form,
             )
-
+        
         try:
             results = intermediate_pathway_analysis(
                 client=client,

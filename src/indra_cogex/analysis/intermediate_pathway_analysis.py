@@ -537,11 +537,14 @@ def intermediate_pathway_analysis(
             "downstream_scores": downstream_scores,
         }
     
+    intermediate_curies = intermediates_df["curie"].tolist()
+    
     entity_to_regulators = get_entity_to_regulators(
         client=client,
         minimum_evidence_count=minimum_evidence_count,
         minimum_belief=minimum_belief,
         relationship_types=upstream_relationship_types,
+        entities=intermediate_curies,
     )
 
     entity_to_targets = get_entity_to_targets(
@@ -549,6 +552,7 @@ def intermediate_pathway_analysis(
         minimum_evidence_count=minimum_evidence_count,
         minimum_belief=minimum_belief,
         relationship_types=downstream_relationship_types,
+        entities=intermediate_curies,
     )
 
     pathways_df = assemble_pathways(
